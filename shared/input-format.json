@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1.0",
+  "dataSource": "synthetic",
+  "exerciseId": "seated_elbow_bend",
+  "side": "left",
+  "angleConvention": "inner_joint_angle_deg_straight_is_180",
+  "sessions": [
+    {
+      "sessionId": "demo-001",
+      "startedAt": "2026-11-07T20:00:00Z",
+      "durationSeconds": 120,
+      "targetReps": 10,
+      "completedReps": 8,
+      "medianRepDurationSeconds": 4.2,
+      "medianInterRepPauseSeconds": 2.1,
+      "estimatedExtensionHoldAngleDeg": 148,
+      "estimatedFlexionHoldAngleDeg": 82,
+      "trackingValidFraction": 0.91,
+      "trackingLossEvents": 2,
+      "incompleteCycles": 1,
+      "stopReason": "user_ended",
+      "measurementProtocolId": "elbow-side-view-v1",
+      "trackerVersion": "demo-v2"
+    }
+  ]
+}
