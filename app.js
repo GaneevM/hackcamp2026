@@ -51,7 +51,7 @@ const movements = {
     keys: ['shoulder', 'elbow', 'wrist'], frame: 'Face the camera · show both shoulders and the selected arm.',
     prompt: 'Sit comfortably facing the camera. Keep both shoulders visible and bring one relaxed arm across your chest.',
   },
-  wave: { title: 'Camera check · wave', metric: 'Arm landmarks', view: 'front view', keys: [], frame: 'Face camera · show shoulder, elbow, wrist.' },
+  wave: { title: 'Hand wave', metric: 'Wave repetitions', view: 'front view', keys: [], frame: 'Face camera · show shoulder, elbow, wrist.' },
 };
 const app = {
   stream: null, landmarker: null, running: false, raf: 0, facing: 'user', reps: 0,
@@ -76,6 +76,7 @@ const readCalibrations = () => { try { return JSON.parse(localStorage.getItem(sc
 const saveCalibrations = (values) => localStorage.setItem(scopedStorageKey(CALIBRATION_KEY), JSON.stringify(values));
 const activeMovement = () => movements[$('exerciseSelect').value] || movements.sit;
 // Retained for session metadata and older saved push-up records.
+const plannedWave = () => $('exerciseSelect').value==='wave' && (readPlan().exercises||[]).includes('wave');
 const pushupVariant = () => $('pushupVariant')?.value || 'floor';
 const calibrationKey = (movement = $('exerciseSelect').value, side = $('bodySide').value) => `${movement}:${side}`;
 const getCalibration = (movement, side) => readCalibrations()[calibrationKey(movement, side)];
@@ -201,7 +202,7 @@ function readPose(landmarks, world) {
   if(app.countdownActive){$('startBtn').disabled=true;$('trackingTitle').textContent='Get ready';$('trackingCopy').textContent=`Step into view · ${app.countdownRemaining}s`;return visibility.ready;}
   if (movement === 'wave') {
     $('startBtn').disabled = app.running;
-    $('trackingTitle').textContent = app.running ? 'Session active · camera check' : 'Camera check ready — press Start demo';
+    $('trackingTitle').textContent = app.running ? 'Hand wave session' : 'Hand wave ready';
     $('trackingCopy').textContent = visibility.ready ? 'Raise one hand and wave out and back. Your hand can stay on one side of your body.' : 'Show a shoulder, elbow, and wrist. Counting waits until they are visible.';
     cameraState(app.running ? (visibility.ready ? 'Session active' : 'Active · waiting for view') : 'Not started', visibility.ready ? 'good' : 'bad', visibility.ready ? 'One out-and-back hand movement = one demo cycle.' : movements.wave.frame, `${visibility.count}/${visibility.total} joints`);
     updateAngleText();
@@ -687,7 +688,7 @@ function monitor() {
             const arm = available.find(candidate => candidate[0] === waveCounter.arm && raised(candidate))
               || available.find(raised) || available[0];
             if (arm) {
-              const [side, shoulder, wrist] = arm;
+              const [side, shoulder, wrist] = arm;app.waveSide=side;
               const shoulderWidth = landmarks[11] && landmarks[12]
                 ? Math.hypot(landmarks[11].x - landmarks[12].x, landmarks[11].y - landmarks[12].y) : .2;
               const counted = waveCounter.update({
@@ -732,14 +733,14 @@ function setActive(active) {
   syncCameraControl();
   const captureButton = $('capturePhoto'); if (captureButton) captureButton.disabled = !active || app.manual || $('exerciseSelect').value === 'wave';
   const isWave = $('exerciseSelect').value === 'wave';
-  $('stageStop').textContent = isWave ? 'Finish camera check' : 'Finish & save';
-  $('startBtn').textContent = active ? 'In progress' : isWave ? 'Start demo' : 'Start session';
+  $('stageStop').textContent = isWave && !plannedWave() ? 'Finish camera check' : 'Finish & save';
+  $('startBtn').textContent = active ? 'In progress' : isWave && !plannedWave() ? 'Start demo' : 'Start session';
   $('startBtn').disabled = active || (!app.manual && (!app.stream || !app.landmarker));
   if ($('pushupVariant')) $('pushupVariant').disabled=active;
   if (active) {
-    $('trackingTitle').textContent = app.manual ? 'Manual logging' : isWave ? 'Wave demo' : 'Tracking';
+    $('trackingTitle').textContent = app.manual ? 'Manual logging' : isWave ? (plannedWave()?'Hand wave session':'Wave demo') : 'Tracking';
     $('trackingCopy').textContent = app.manual ? 'Add reps below.' : isWave ? 'Raise hand and wave.' : `${activeMovement().metric} estimate · move comfortably.`;
-    cameraState(app.manual ? 'Manual' : isWave ? 'Wave demo' : 'Tracking', app.manual || isWave ? 'good' : 'active', app.manual ? 'Camera off · add reps.' : isWave ? 'Demo only · not saved.' : 'Camera angle is an estimate.', isWave ? 'Arm' : app.manual ? 'Manual' : `${app.side} side`);
+    cameraState(app.manual ? 'Manual' : isWave ? 'Wave demo' : 'Tracking', app.manual || isWave ? 'good' : 'active', app.manual ? 'Camera off · add reps.' : isWave ? (plannedWave()?'Wave exercise · reps are saved.':'Demo only · not saved.') : 'Camera angle is an estimate.', isWave ? 'Arm' : app.manual ? 'Manual' : `${app.side} side`);
   }
 }
 
@@ -806,7 +807,7 @@ function beginSession(manual = false) {
   app.manual = manual; app.reps = 0; app.phase = 'ready'; app.sessionStartAngle = null; app.sessionAngles = []; app.waveSide = null; app.waveSwitches = 0; app.startedAt = Date.now(); app.activeSessionId = crypto.randomUUID?.() || String(Date.now());
   waveCounter.reset();
   $('repCount').textContent = '0'; $('repReward').textContent = '';
-  const target = $('exerciseSelect').value === 'wave' ? 0 : Number(readPlan().reps);
+  const target = Number(readPlan().reps);
   $('repGoal').textContent = Number.isInteger(target) && target > 0 ? '0 / ' + target + ' session goal' : 'One comfortable rep at a time';
   if (manual) {
     app.cameraRequest++; app.cameraAcquiring = false;
@@ -819,7 +820,7 @@ function beginSession(manual = false) {
   } else $('manualCounter').style.display = 'none';
   $('exerciseSelect').disabled = true; $('bodySide').disabled = true;
   const plannedReps = Number(readPlan().reps);
-  companion?.start({ manual, movement: $('exerciseSelect').value,
+  companion?.start({ manual, recordWave:plannedWave(), movement: $('exerciseSelect').value,
     targetReps: Number.isInteger(plannedReps) && plannedReps > 0 && plannedReps <= 200 ? plannedReps : null });
   liveFeedback.start({manual,movement:$('exerciseSelect').value,side:$('bodySide').value,variant:pushupVariant()});
   if(manual) setActive(true); else startCountdown();
@@ -848,13 +849,13 @@ function endSession() {
   liveFeedback.stop();
   if (!app.running) return;
   cancelGesturePhoto('Photo countdown cancelled because the session ended.');
-  const demo = $('exerciseSelect').value === 'wave';
+  const demo = $('exerciseSelect').value === 'wave' && !plannedWave();
   const duration = Math.max(1, Math.round((Date.now() - app.startedAt) / 60000));
   const highestAngle = app.sessionAngles.length ? Math.round(Math.max(...app.sessionAngles)) : null;
   const startAngle = app.sessionStartAngle === null ? null : Math.round(app.sessionStartAngle);
   const row = {
     id: app.activeSessionId || crypto.randomUUID?.() || String(Date.now()), date: new Date().toISOString(), exercise: activeMovement().title,
-    metric: activeMovement().metric, movement: $('exerciseSelect').value, side: $('bodySide').value,
+    metric: activeMovement().metric, movement: $('exerciseSelect').value, side: $('exerciseSelect').value==='wave'?(app.waveSide||$('bodySide').value):$('bodySide').value,
     reps: app.reps, duration, angle: highestAngle, startAngle,
     excursion: highestAngle !== null && startAngle !== null ? Math.max(0, highestAngle - startAngle) : null,
     confidence: app.confidence, pain: app.pain, note: $('note').value.trim(), manual: app.manual, checkin: false,
@@ -911,12 +912,12 @@ function updateMovementUI() {
   movementCounter.reset();
   if($('pushupCoach')){$('pushupCoach').hidden=movement!=='pushup';pushupCounter.reset();pushupPose=null;}
   document.querySelectorAll('[data-movement]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.movement === movement)));
-  $('exerciseTitle').textContent = wave ? 'Camera wave demo' : cfg.title;
+  $('exerciseTitle').textContent = wave ? (plannedWave()?'Hand wave':'Camera wave demo') : cfg.title;
   const savedReps=Number(readPlan().reps);
   $('exerciseDesc').textContent = wave ? 'Wave to test tracking' : Number.isInteger(savedReps)&&savedReps>0 ? `${savedReps} reps · from your saved plan` : cfg.metric;
   document.querySelector('.plan-chip').textContent = wave ? 'Demo' : 'Selected exercise';
   $('planNoticeText').innerHTML = wave
-    ? '<strong>Camera demo.</strong> Wave one arm to test tracking. Not saved to progress.'
+    ? (plannedWave()?'<strong>Hand wave.</strong> One sideways-and-back movement counts as one rep.':'<strong>Camera demo.</strong> Wave one arm to test tracking. Not saved to progress.')
     : `<strong>Camera-guided estimate.</strong> ${cfg.title} · follow your care team’s instructions.`;
   $('trackingCopy').textContent = cfg.frame; $('setupTitle').textContent = wave ? 'Show one arm' : 'Set up your camera';
   $('setupCopy').textContent = wave ? 'Face camera. Raise hand and wave.' : cfg.prompt;
@@ -924,7 +925,7 @@ function updateMovementUI() {
   $('cameraRequirement').textContent = wave ? 'Camera needed' : 'Camera optional';
   $('stage').classList.toggle('wave-mode', wave); $('manualBtn').disabled = wave; $('manualBtn').style.opacity = wave ? '.45' : '';
   $('manualBtn').title = wave ? 'Camera required for demo' : 'Log without camera';
-  $('bodySide').disabled = wave; $('startBtn').textContent = wave ? 'Start demo' : 'Start session';
+  $('bodySide').disabled = wave; $('startBtn').textContent = wave && !plannedWave() ? 'Start demo' : 'Start session';
   $('metricAngleLabel').textContent = wave ? 'Camera demo' : cfg.metric;
   $('angleMetricName').textContent = wave ? 'Wave demo' : `${cfg.metric} · ${$('bodySide').value} · ${cfg.view}`;
   $('chartSubtitle').textContent = wave ? 'Demo not tracked' : `${cfg.metric} · ${$('bodySide').value} · degrees`;
@@ -1427,6 +1428,7 @@ async function renderMedia() {
   } catch (error) { console.warn('Local media storage unavailable', error); toast('Could not open local photo storage.'); }
 }
 const planExerciseCatalog=[
+  {id:'wave',title:'Hand wave',pattern:/\b(?:hand[- ]?waves?|waving|wave exercise)\b/i},
   {id:'sit',title:'Sit-to-stand',pattern:/\b(?:sit[- ]?to[- ]?stands?|chair rises?)\b/i},
   {id:'reach',title:'Overhead reach',pattern:/\b(?:overhead reach|shoulder flexion|arm raises?)\b/i},
   {id:'crossbody',title:'Across-the-torso seated arm stretch',pattern:/\b(?:across[- ]the[- ]torso|across[- ]the[- ]chest|across[- ]the[- ]body|cross[- ]body|seated arm stretch)\b/i},
@@ -1455,6 +1457,7 @@ function updatePracticeChoices(plan){
   const buttons=[...screen.querySelectorAll('[data-movement]')];
   buttons.forEach(button=>{if(!button.dataset.baseLabel)button.dataset.baseLabel=button.textContent.trim();});
   const prescribed=new Set((Array.isArray(plan?.exercises)?plan.exercises:[]).filter(id=>planExerciseCatalog.some(item=>item.id===id)));
+  buttons.filter(button=>button.dataset.movement==='wave').forEach(button=>{button.dataset.baseLabel=prescribed.has('wave')?'Hand wave':'Wave check';});
   if(prescribed.size){
     note.hidden=false;note.textContent='Your physiotherapist’s exercises · confirmed in My Plan';
     other.hidden=false;choices.setAttribute('aria-label','Exercises in your physiotherapy plan');

@@ -1,6 +1,6 @@
 export const escapeText = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const dateKey = value => {const d=new Date(value);return Number.isFinite(+d)?`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`:'';};
-export const practiceRows = rows => rows.filter(r=>!r.checkin&&!r.demo&&r.movement!=='wave'&&Number.isFinite(r.reps)).sort((a,b)=>new Date(a.date)-new Date(b.date));
+export const practiceRows = rows => rows.filter(r=>!r.checkin&&!r.demo&&Number.isFinite(r.reps)).sort((a,b)=>new Date(a.date)-new Date(b.date));
 export function filterHistory(rows,{movement='all',side='all',days=0,now=Date.now()}={}){
  return practiceRows(rows).filter(r=>{const t=+new Date(r.date);return Number.isFinite(t)&&t<=now&&(!days||t>=now-days*864e5)&&(movement==='all'||r.movement===movement)&&(side==='all'||r.side===side);});
 }

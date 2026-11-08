@@ -140,6 +140,7 @@ export function createCompanion(options) {
   function updateActivity() {
     if (!run) { el('activity').textContent = 'Ready when you are. Start a session above.'; return; }
     const labels = { sit: 'Sit-to-stand', reach: 'Overhead reach', elbow: 'Elbow bend', wave: 'Camera wave check (not saved)' };
+    if(run.config.recordWave)labels.wave='Hand wave';
     el('activity').textContent = 'Active: ' + (labels[run.config.movement] || run.config.movement) + ' · ' + run.reps + ' reps recorded.';
   }
 
@@ -308,7 +309,7 @@ export function createCompanion(options) {
     start(config) {
       chime.unlock(); goalCelebrated = false;
       stop(); current = null; viewVersion++; el('followup').hidden = true;
-      run = new SessionMetrics({ ...config, targetReps: config.movement === 'wave' ? null : config.targetReps });
+      run = new SessionMetrics({ ...config, targetReps: config.movement === 'wave' && !config.recordWave ? null : config.targetReps });
       updateActivity();
       event('session_started');
     },
@@ -321,7 +322,7 @@ export function createCompanion(options) {
     },
     observe(frame) {
       if (!run || run.config.manual) return;
-      if (run.config.movement === 'wave') {
+      if (run.config.movement === 'wave' && !run.config.recordWave) {
         const now = performance.now();
         if (frame.ready) {
           run.badSince = null;
@@ -336,13 +337,13 @@ export function createCompanion(options) {
       const events = run.observe(frame);
       if (events.includes('rep_completed')) updateActivity();
       for (const name of events) {
-        if (name === 'tracking_lost') options.resetIncompleteCycle();
+        if (name === 'tracking_lost') options.resetIncompleteCycle?.();
         event(name);
       }
     },
     async finish(session) {
       if (!run) return;
-      if (run.config.movement === 'wave') {
+      if (run.config.movement === 'wave' && !run.config.recordWave) {
         run = null; updateActivity(); event('session_ended');
         el('activity').textContent = 'Camera check complete · not saved';
         el('event').textContent = 'This was a framing test. Choose an exercise for a saved session and a reflection question.';

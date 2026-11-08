@@ -6,7 +6,7 @@ export const journalSchema = z.object({
   session: z.object({
     id: z.string().min(1).max(100), date: z.string().datetime(),
     exercise: z.string().min(1).max(100), metric: z.string().max(100),
-    movement: z.enum(['sit', 'reach', 'elbow', 'crossbody', 'pushup']), side: z.enum(['left', 'right']),
+    movement: z.enum(['sit', 'reach', 'elbow', 'crossbody', 'pushup', 'wave']), side: z.enum(['left', 'right']),
     reps: z.number().int().min(0).max(10000), duration: z.number().finite().nonnegative(),
     angle, startAngle: angle, excursion: angle,
     confidence: z.number().int().min(1).max(5).nullable(),
@@ -20,7 +20,7 @@ export const journalSchema = z.object({
     source: z.enum(['camera', 'manual']), startedAt: z.string().datetime(),
     durationSeconds: z.number().finite().nonnegative(),
     targetReps: z.number().int().positive().max(200).nullable(),
-    angleConvention: z.enum(['flexion_deg_straight_is_0', 'hip_shoulder_elbow_angle_deg_arm_down_is_0', 'opposite_shoulder_shoulder_wrist_angle_deg']),
+    angleConvention: z.enum(['flexion_deg_straight_is_0', 'hip_shoulder_elbow_angle_deg_arm_down_is_0', 'opposite_shoulder_shoulder_wrist_angle_deg', 'hand_wave_cycles_no_joint_angle']),
     minimumObservedAngleDeg: angle, maximumObservedAngleDeg: angle,
     trackingValidFraction: z.number().min(0).max(1).nullable(),
     trackingLossEvents: z.number().int().nonnegative(),
@@ -36,10 +36,12 @@ export const journalSchema = z.object({
     ctx.addIssue({ code:'custom', message:'Manual logs cannot contain camera measurements.' });
   if (data.metrics.minimumObservedAngleDeg!==null && data.metrics.maximumObservedAngleDeg!==null && data.metrics.minimumObservedAngleDeg>data.metrics.maximumObservedAngleDeg)
     ctx.addIssue({ code:'custom', message:'Minimum observed angle cannot exceed maximum.' });
-  const expected = data.session.movement === 'crossbody' ? 'opposite_shoulder_shoulder_wrist_angle_deg' : data.session.movement === 'reach'
+  const expected = data.session.movement === 'wave' ? 'hand_wave_cycles_no_joint_angle' : data.session.movement === 'crossbody' ? 'opposite_shoulder_shoulder_wrist_angle_deg' : data.session.movement === 'reach'
     ? 'hip_shoulder_elbow_angle_deg_arm_down_is_0' : 'flexion_deg_straight_is_0';
   if (data.metrics.angleConvention !== expected)
     ctx.addIssue({ code: 'custom', message: 'Incorrect angle convention for movement.' });
+  if(data.session.movement==='wave'&&[data.session.angle,data.session.startAngle,data.session.excursion,data.metrics.minimumObservedAngleDeg,data.metrics.maximumObservedAngleDeg].some(value=>value!==null))
+    ctx.addIssue({code:'custom',message:'Wave repetitions do not measure joint angles.'});
 });
 export const journalScopeSchema = scopeSchema;
 export const contextSchema = z.object({ scope: scopeSchema, answer: z.string().trim().min(1).max(2000) }).strict();

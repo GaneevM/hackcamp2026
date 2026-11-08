@@ -27,10 +27,12 @@ export class SessionMetrics {
   observe({ ready, angle, reps, phase }, now = performance.now()) {
     const events = [];
     this.frames++;
-    if (ready && Number.isFinite(angle)) {
+    if (ready && (Number.isFinite(angle)||this.config.movement==='wave')) {
       this.validFrames++;
-      this.low = this.low === null ? angle : Math.min(this.low, angle);
-      this.high = this.high === null ? angle : Math.max(this.high, angle);
+      if(Number.isFinite(angle)){
+        this.low = this.low === null ? angle : Math.min(this.low, angle);
+        this.high = this.high === null ? angle : Math.max(this.high, angle);
+      }
       this.badSince = null;
       if (this.lost) events.push('tracking_restored');
       this.lost = false;
@@ -61,7 +63,7 @@ export class SessionMetrics {
       startedAt: this.startedAt,
       durationSeconds: Math.max(0, (now - this.started) / 1000),
       targetReps: this.config.targetReps,
-      angleConvention: movement === 'crossbody' ? 'opposite_shoulder_shoulder_wrist_angle_deg' : movement === 'reach'
+      angleConvention: movement === 'wave' ? 'hand_wave_cycles_no_joint_angle' : movement === 'crossbody' ? 'opposite_shoulder_shoulder_wrist_angle_deg' : movement === 'reach'
         ? 'hip_shoulder_elbow_angle_deg_arm_down_is_0'
         : 'flexion_deg_straight_is_0',
       minimumObservedAngleDeg: manual ? null : this.low,

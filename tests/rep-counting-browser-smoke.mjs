@@ -9,7 +9,7 @@ import {createRequire} from 'node:module';
 const {chromium}=createRequire(import.meta.url)('playwright');
 const root=path.resolve('dist');
 const sdk="window.auth0={Auth0Client:class {async checkSession(){} async isAuthenticated(){return true} async getUser(){return {sub:'practice-ui-test',name:'UI Test'}}}};";
-const harness=`\nwindow.uiFixture={app,handControls,movementCounter,readPose,updateMovementCounter,bodyPoints,scheduleGesturePhoto,navigateHandActionList,mediaAll,async setup(){const canvas=document.createElement('canvas');canvas.width=640;canvas.height=360;canvas.getContext('2d').fillRect(0,0,640,360);app.stream=canvas.captureStream(20);app.landmarker={detectForVideo:()=>({landmarks:[],worldLandmarks:[]})};app.poseReady=true;document.getElementById('startBtn').disabled=false;document.getElementById('video').srcObject=app.stream;await document.getElementById('video').play();document.getElementById('cameraEmpty').style.display='none';document.getElementById('video').style.display='block';syncCameraControl();}};`;
+const harness=`\nwindow.uiFixture={app,handControls,readSessions,applyExtractedText,endSession,companion,waveCounter,movementCounter,readPose,updateMovementCounter,bodyPoints,scheduleGesturePhoto,navigateHandActionList,mediaAll,async setup(){const canvas=document.createElement('canvas');canvas.width=640;canvas.height=360;canvas.getContext('2d').fillRect(0,0,640,360);app.stream=canvas.captureStream(20);app.landmarker={detectForVideo:()=>({landmarks:[],worldLandmarks:[]})};app.poseReady=true;document.getElementById('startBtn').disabled=false;document.getElementById('video').srcObject=app.stream;await document.getElementById('video').play();document.getElementById('cameraEmpty').style.display='none';document.getElementById('video').style.display='block';syncCameraControl();}};`;
 const server=http.createServer(async(req,res)=>{try{
  const url=new URL(req.url,'http://localhost'),file=path.resolve(root,'.'+(url.pathname==='/'?'/index.html':url.pathname));
  if(!file.startsWith(root+path.sep)){res.writeHead(403);return res.end();}
@@ -66,5 +66,16 @@ try{
  });
  for(const row of results.filter(r=>r.movement)){assert.equal(row.count,row.walking?0:2,JSON.stringify(row));assert.equal(row.display,row.walking?'0':'2');}
  assert.deepEqual(results.at(-2),{idle:0,camera:0,manual:1,afterStop:1});assert.deepEqual(results.at(-1),{handToggle:true,enabled:true,held:true,resumed:true,reps:1});
+ const waveSession=await page.evaluate(()=>{
+  const f=window.uiFixture,$=id=>document.getElementById(id);
+  f.applyExtractedText('Diagnosis: Upper-limb movement practice - fictional demo focus.\nExercise: Hand wave.\nDose: 1 set of 8 reps. Frequency: 3 sessions per week.');
+  const detected=$('planExerciseOptions').querySelector('[data-plan-exercise="wave"]')?.checked;
+  $('physioPlanForm').requestSubmit();$('exerciseSelect').value='wave';$('exerciseSelect').dispatchEvent(new Event('change'));
+  f.app.running=true;f.app.manual=false;f.app.reps=0;f.app.startedAt=Date.now()-5000;f.app.activeSessionId='planned-wave-browser';f.app.sessionAngles=[];f.app.sessionStartAngle=null;
+  f.companion.start({manual:false,movement:'wave',recordWave:true,targetReps:8});f.waveCounter.reset();
+  for(let i=0;i<8;i++)for(const [position,t] of [[.2,0],[.28,100],[.28,180],[.2,300],[.2,380]]){if(f.waveCounter.update({position,raised:true,arm:'left'},i*600+t))f.app.reps++;f.companion.observe({ready:true,angle:null,reps:f.app.reps,phase:'ready'});}
+  f.endSession();const row=f.readSessions().at(-1);return {detected,reps:row?.reps,movement:row?.movement,angle:row?.angle};
+ });
+ assert.deepEqual(waveSession,{detected:true,reps:8,movement:'wave',angle:null});
  assert.deepEqual(errors,[]);console.log('Passed app integration:',JSON.stringify(results));
 }finally{await browser?.close();await new Promise(r=>server.close(r));}
