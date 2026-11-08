@@ -54,7 +54,7 @@ const movements = {
 };
 const app = {
   stream: null, landmarker: null, running: false, raf: 0, facing: 'user', reps: 0,
-  cameraRequest: 0, cameraAcquiring: false, cameraPaused: false,
+  cameraRequest: 0, cameraAcquiring: false, cameraPaused: false, autoStartFromHome: false,
   countdownActive: false, countdownRemaining: 5, countdownTimer: null,
   phase: 'ready', confidence: null, pain: null, poseReady: false, manual: false,
   side: 'left', currentAngle: null, angleSamples: [], sessionAngles: [], activeSessionId: null,
@@ -290,6 +290,7 @@ function setHandControlsEnabled(enabled) {
   handControls.label=null;handControls.failures=0;handControls.lastHand=null;
   $('handControlsToggle').textContent=enabled?'Hand controls on':'Enable hand controls';
   $('handControlsToggle').setAttribute('aria-pressed',String(enabled));
+  if($('profileHandControlStatus'))$('profileHandControlStatus').textContent=enabled?'Hand controls are on. The camera must stay on for gesture input.':'Hand controls are off.';
   $('handControlsLegend').hidden=!enabled;$('handControlsHud').hidden=!enabled;
   if(!enabled)handStatus('Hand controls off. Enable them to use finger gestures.');
 }
@@ -409,6 +410,7 @@ async function startCamera(deviceId) {
     if (!app.raf) monitor();
   } catch (error) {
     if (requestId !== app.cameraRequest) return;
+    app.autoStartFromHome = false;
     app.cameraAcquiring = false;
     app.stream?.getTracks().forEach((track)=>track.stop());app.stream=null;
     syncCameraControl();
@@ -418,6 +420,7 @@ async function startCamera(deviceId) {
 }
 
 function stopCamera() {
+  app.autoStartFromHome = false;
   if (app.running || app.autoCalibration.active) {
     toast('Finish the active session or calibration before turning the camera off.');
     return;
@@ -559,6 +562,10 @@ function monitor() {
       drawPose(landmarks);
       if (landmarks) {
         const ready = readPose(landmarks, world);
+        if (app.autoStartFromHome && ready && !app.running && !app.countdownActive) {
+          app.autoStartFromHome = false;
+          beginSession(false);
+        }
         if (app.running && !app.manual && ready) {
           const movement = $('exerciseSelect').value;
           if (movement === 'wave') {
@@ -631,7 +638,7 @@ function setCountdownControls(active) {
 
 function cancelCountdown() {
   if (app.countdownTimer) clearInterval(app.countdownTimer);
-  app.countdownTimer = null; app.countdownActive = false;
+  app.countdownTimer = null; app.countdownActive = false; app.autoStartFromHome = false;
   $('sessionCountdown').hidden = true;
   app.activeSessionId = null; app.manual = false;
   setCountdownControls(false);
@@ -668,6 +675,7 @@ function startCountdown() {
 }
 
 function beginSession(manual = false) {
+  app.autoStartFromHome = false;
   pushupCounter.reset(); movementCounter.reset(); pushupPose=null;
   $('newSession').hidden = true;
   if (app.pain >= 7) { $('painNote').classList.add('show'); toast('Your pain check-in is noted. Follow your care team’s guidance before deciding whether to exercise.'); }
@@ -695,6 +703,7 @@ function beginSession(manual = false) {
 $('startBtn').onclick = () => {
   if(app.running||app.countdownActive)return;
   if (!app.stream || !app.landmarker) { toast('Set up camera or log manually.'); return; }
+  app.autoStartFromHome = false;
   if(app.cameraPaused)setCameraViewPaused(false);
   beginSession(false);
   if (!app.poseReady) toast('Session started. Step into view; counting waits for the selected joints.');
@@ -775,11 +784,12 @@ function updateMovementUI() {
   if($('pushupCoach')){$('pushupCoach').hidden=movement!=='pushup';pushupCounter.reset();pushupPose=null;}
   document.querySelectorAll('[data-movement]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.movement === movement)));
   $('exerciseTitle').textContent = wave ? 'Camera wave demo' : cfg.title;
-  $('exerciseDesc').textContent = wave ? 'Wave to test tracking' : movement === 'sit' ? '2 sets · 8 reps · chair' : cfg.metric;
-  document.querySelector('.plan-chip').textContent = wave ? 'Demo' : 'Today’s plan';
+  const savedReps=Number(readPlan().reps);
+  $('exerciseDesc').textContent = wave ? 'Wave to test tracking' : Number.isInteger(savedReps)&&savedReps>0 ? `${savedReps} reps · from your saved plan` : cfg.metric;
+  document.querySelector('.plan-chip').textContent = wave ? 'Demo' : 'Selected exercise';
   $('planNoticeText').innerHTML = wave
     ? '<strong>Camera demo.</strong> Wave one arm to test tracking. Not saved to progress.'
-    : `<strong>Follow your physio’s plan.</strong> ${cfg.title} · camera angle is an estimate.`;
+    : `<strong>Camera-guided estimate.</strong> ${cfg.title} · follow your care team’s instructions.`;
   $('trackingCopy').textContent = cfg.frame; $('setupTitle').textContent = wave ? 'Show one arm' : 'Set up your camera';
   $('setupCopy').textContent = wave ? 'Face camera. Raise hand and wave.' : cfg.prompt;
   syncCameraControl();
@@ -1002,6 +1012,7 @@ function render() {
   carePages?.render();
   const rows = readSessions(); const movement = $('exerciseSelect').value; const side = $('bodySide').value;
   renderJournalOverview(rows);
+  renderClimb(rows);
   renderCalibration(); renderChart(rows); renderAnalysis(rows); updateCue(reportData()); renderPlan();
   const practice=rows.filter((row)=>!row.checkin&&!row.demo); const days=new Set(practice.filter((row)=>Date.now()-new Date(row.date).getTime()<7*864e5).map((row)=>new Date(row.date).toDateString())).size;
   $('metricStreak').textContent=String(days); const list=$('sessionList');
@@ -1065,10 +1076,10 @@ function buildPushupCoach() {
   <div class="pushup-feedback"><span id="pushupPhase">Waiting for pose</span><p id="pushupCue" role="status" aria-live="polite">Set up your camera, then hold the starting position.</p><small id="pushupTarget">Demo thresholds · use Quick calibrate for your comfortable range.</small></div>
   <details class="pushup-method"><summary>What this checks</summary><p>Estimated 3D elbow angle and shoulder–hip–ankle alignment (shoulder–hip–knee for knee push-ups). Reps need a steady start, bend, and return. Tracking pauses when joints leave view. The percentage measures a match to these limited checks; it is not medical accuracy or a complete form assessment.</p><p>The default rep thresholds are prototype settings, not prescribed rehabilitation angles. Quick calibrate records a separate range for each variation and side. A side camera cannot reliably judge elbow flare, shoulder-blade movement, hand pressure or pain. Only use exercises approved for your plan.</p><a href="https://www.southtees.nhs.uk/resources/combined-press-ups/" target="_blank" rel="noopener">NHS: wall and knee press-ups</a> · <a href="https://www.acefitness.org/resources/everyone/exercise-library/41/push-up/" target="_blank" rel="noopener">ACE: floor push-up technique</a></details>`;
   const controls=$('movement').querySelector('.session-actions')||$('movement').querySelector('.camera-controls');controls.after(coach);
-  $('exerciseSelect').hidden=false;
-  const oldSettings=$('movement').querySelector('.practice-settings');
-  if(oldSettings){controls.append($('capturePhoto'),$('cameraRequirement'));oldSettings.remove();}
-  const selection=$('exerciseSelect').closest('label');selection.className='movement-choice';controls.after(selection);
+  // The exercise chips above the camera are the only visible movement selector.
+  // Keep the backing select for existing scoring, history and plan integrations.
+  $('exerciseSelect').hidden=true;
+  controls.append($('capturePhoto'));
   coach.querySelectorAll('[data-pushup-step]').forEach(button=>button.onclick=()=>drawPushupGuide(button.dataset.pushupStep));
   $('pushupVariant').onchange=()=>{pushupCounter.reset();pushupPose=null;app.poseReady=false;app.currentAngle=null;app.angleSamples=[];$('startBtn').disabled=true;drawPushupGuide('top');showPushupWaiting('Hold the starting position for this variation.');render();};
   $('bodySide').addEventListener('change',()=>{pushupCounter.reset();pushupPose=null;showPushupWaiting('Hold the starting position on the selected side.');});
@@ -1097,93 +1108,95 @@ function buildAppScreens() {
   const recent = $('recentSessions');
   const disclaimer = content.querySelector('.footer-disclaimer');
   const screens = [
-    ['home', 'Home', 'Your plan for today.'],
-    ['move', 'Practice', 'Your prescribed movement.'],
+    ['home', 'Home', 'The peak of physiotherapy.'],
+    ['move', 'Practice', 'Choose an exercise from your care plan.'],
+    ['plan', 'My Plan', 'Your diagnosis, exercise instructions and therapist report.'],
+    ['progress', 'Progress', 'Review your movement and sessions over time.'],
     ['checkin', 'Check-in', 'A quick record of how you feel.'],
-    ['progress', 'Progress', 'Movement over time.'],
-    ['visit', 'Visit note', 'A summary to review with your physio.'],
+    ['visit', 'Visit note', 'Review and prepare a report for your therapist.'],
+    ['profile', 'Profile', 'Your account and camera controls.'],
   ].map(([key, title, subtitle]) => {
     const section = document.createElement('section');
-    section.className = 'app-screen'; section.dataset.screenView = key; section.id = `screen-${key}`; section.hidden = true;
-    section.innerHTML = key === 'home' ? '' : `<div class="screen-heading"><div class="eyebrow">Formnote · ${key === 'move' ? 'Practice' : key === 'visit' ? 'Visit prep' : key}</div><h1>${title}</h1><p>${subtitle}</p></div>`;
+    section.className = 'app-screen screen-' + key; section.dataset.screenView = key; section.id = 'screen-' + key; section.hidden = true;
+    section.innerHTML = key === 'home' ? '' : '<div class="screen-heading"><div class="eyebrow">PhysiPeak</div><h1>' + title + '</h1><p>' + subtitle + '</p></div>';
     content.append(section); return section;
   });
   const byName = Object.fromEntries(screens.map((screen) => [screen.dataset.screenView, screen]));
+
   const homeFocus = document.createElement('section'); homeFocus.className = 'home-focus card';
-  homeFocus.innerHTML = '<div class="home-focus-copy"><span class="home-kicker">TODAY’S PLAN</span><h2 id="homeExercise">Sit-to-stand</h2><p id="homePlanCopy">2 sets · 8 reps · camera optional</p><div class="home-hero-meta"><span>About 8 min</span><span>Alex Chen, PT</span></div><button class="primary" type="button" data-open-screen="move">Begin session <span aria-hidden="true">→</span></button></div><div class="home-art" aria-hidden="true"><svg viewBox="0 0 220 220"><path class="art-chair" d="M42 152h39v-59M41 152v31m40-31v31m-40-20h40"/><circle class="art-head" cx="139" cy="57" r="15"/><path class="art-body" d="M135 76l-10 47 34 14m-34-14-32 27m32-27 30 36m-30-36-22 32"/><path class="art-joint" d="M123 123l-9 13m35 1 10-4"/><path class="art-motion" d="M101 67a49 49 0 0 1 76 22"/><path class="art-arrow" d="m171 78 8 12 4-14"/></svg></div>';
-  const homeLinks = document.createElement('div'); homeLinks.className = 'home-shortcuts';
-  homeLinks.innerHTML = '<div class="journal-list-heading"><span>YOUR NOTES</span><span>Keep track between visits</span></div><button class="shortcut-card" type="button" data-open-screen="checkin"><span class="shortcut-num">01</span><span><b>Check-in</b><small>Pain, confidence and a note for your physio</small></span><span class="shortcut-arrow">↗</span></button><button class="shortcut-card" type="button" data-open-screen="progress"><span class="shortcut-num">02</span><span><b>Progress</b><small>Range, sessions and photos</small></span><span class="shortcut-arrow">↗</span></button><button class="shortcut-card" type="button" data-open-screen="visit"><span class="shortcut-num">03</span><span><b>Visit note</b><small>A summary you can review and share</small></span><span class="shortcut-arrow">↗</span></button>';
-  byName.home.append(welcome, homeFocus, homeLinks);
+  homeFocus.innerHTML = `<div class="home-focus-copy"><span class="home-kicker" id="homeGreeting">WELCOME BACK</span><h1>The peak of physiotherapy.</h1><p>A steady climb, one comfortable session at a time.</p><div class="climb-rank"><span class="climb-rank-mark">↗</span><span><small>YOUR CURRENT RANK</small><strong id="climbRankName">Trailhead</strong></span><span class="climb-step" id="climbStep">Step 1 of 5</span></div></div><div class="mountain-scene" aria-hidden="true"><svg viewBox="0 0 1150 300" preserveAspectRatio="xMidYMid slice"><defs><linearGradient id="peakSky" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#F9FAFC"/><stop offset="1" stop-color="#E7EDF4"/></linearGradient><linearGradient id="peakRock" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#244968"/><stop offset="1" stop-color="#011C3A"/></linearGradient></defs><path class="peak-sky" d="M0 0h1150v300H0z"/><path class="peak-far" d="m0 238 130-86 81 55 156-144 114 112 150-131 113 131 113-78 104 102 119-82 170 111v72H0z"/><path class="peak-main" d="m79 273 136-98 62 42L429 66l130 143 73-111 87 94 116-82 112 87 101-58 102 94v67H79z"/><path class="peak-snow" d="m429 66-75 91 45-20 29 29 30-34 26 32 30-19-85-79Zm203 32-51 78 36-25 25 19 23-24 26 22-59-70Zm203 12-45 61 30-18 24 19 20-21 25 19-54-60Z"/><path class="climb-route-muted" pathLength="100" d="M105 264 C210 248 235 223 295 219 S393 208 419 174 S481 147 538 154 S626 145 660 120 S723 92 782 106 S854 83 887 63 S955 45 985 24"/><path class="climb-route-progress" id="climbRouteProgress" pathLength="100" stroke-dasharray="0 100" d="M105 264 C210 248 235 223 295 219 S393 208 419 174 S481 147 538 154 S626 145 660 120 S723 92 782 106 S854 83 887 63 S955 45 985 24"/><g class="climb-checkpoints"><circle cx="105" cy="264" r="9"/><circle cx="419" cy="174" r="8"/><circle cx="660" cy="120" r="8"/><circle cx="887" cy="63" r="8"/><circle cx="985" cy="24" r="9"/></g><circle class="climb-marker" id="climbMarker" cx="105" cy="264" r="12"/><path class="peak-flag" d="M985 18V-8m0 0 33 8-33 9"/></svg></div>`;
+  const homeGoalRow = document.createElement('div'); homeGoalRow.className = 'home-goal-row';
+  homeGoalRow.innerHTML = '<section class="home-goal card"><div class="home-goal-main"><span class="home-kicker">YOUR GOAL</span><strong id="homeGoalTitle">Set a goal with your physiotherapist</strong><span id="homeGoalDetail">Your personal plan will appear here.</span><button type="button" class="secondary home-upload" id="homeUploadDiagnosis">Upload diagnosis</button></div><div class="home-goal-progress"><div class="goal-progress-ring" id="goalProgressRing"><strong id="homeGoalProgress">—</strong></div><span class="goal-progress-label" id="homeGoalLabel">WEEKLY GOAL</span></div></section><button type="button" class="home-start" id="homeStartSession"><span class="home-start-play" aria-hidden="true">▶</span><span>Start Session</span><span class="home-start-arrow" aria-hidden="true">→</span></button></div>';
+  const homeDashboard = document.createElement('div'); homeDashboard.className = 'home-dashboard';
+  homeDashboard.innerHTML = '<section class="home-today-plan"><div class="home-panel-head"><h2>Today’s Plan</h2><span id="homePlanTiming">Your saved plan</span></div><div class="home-today-body"><span class="today-plan-step">TODAY</span><div><strong id="homeExercise">Choose a movement</strong><p id="homePlanCopy">Add your physiotherapist’s instructions in My Plan.</p></div></div><div class="home-plan-note" id="homePlanNote">Choose an exercise from your own care plan. No exercise is prescribed by the app.</div><div class="home-plan-notice-slot"></div><button class="home-plan-link" type="button" data-open-screen="plan">Review my plan <span aria-hidden="true">→</span></button></section><div class="home-side-panels"><section class="home-progress-mount" id="homeProgressMount"><h2>Your Progress</h2></section><section class="home-last-mount" id="homeLastMount"><h2>Last Session</h2></section></div></div>';
+  const homePhotos = document.createElement('section'); homePhotos.className = 'home-photos'; homePhotos.id = 'homePhotosMount';
+  const homeLinks = document.createElement('div'); homeLinks.className = 'home-links';
+  homeLinks.innerHTML = '<button class="home-link" type="button" data-open-screen="checkin"><span>How did today feel?</span><span aria-hidden="true">→</span></button><button class="home-link" type="button" data-open-screen="progress"><span>View your progress</span><span aria-hidden="true">→</span></button>';
+  byName.home.append(welcome, homeFocus, homeGoalRow, homeDashboard, homePhotos, homeLinks);
+  homeDashboard.querySelector('.home-plan-notice-slot').append(notice);
+
   const practiceLayout = document.createElement('div'); practiceLayout.className = 'practice-layout';
   const practiceAside = document.createElement('aside'); practiceAside.className = 'practice-aside';
   practiceLayout.append(movement, practiceAside); practiceAside.append(stats, calibration); byName.move.append(practiceLayout);
+  const capture = document.createElement('button'); capture.type = 'button'; capture.className = 'secondary'; capture.id = 'capturePhoto'; capture.textContent = 'Capture photo'; capture.disabled = true; capture.title = 'Start a camera session to capture a photo.';
+  $('cameraRequirement').before(capture);
+  buildPushupCoach();
   const checkinLayout = document.createElement('div'); checkinLayout.className = 'checkin-layout';
   checkinLayout.append(checkin, reflection); byName.checkin.append(checkinLayout);
+
   const progressLayout = document.createElement('div'); progressLayout.className = 'progress-layout';
   const progressMain = document.createElement('div'); progressMain.className = 'progress-main';
   const progressAside = document.createElement('aside'); progressAside.className = 'progress-aside';
   progressLayout.append(progressMain, progressAside); progressMain.append(progress, recent); byName.progress.append(progressLayout);
   const progressTools = document.createElement('div'); progressTools.className = 'progress-tools';
-  progressTools.innerHTML = `<section class="card panel"><div class="panel-top"><div><h2>My physio plan</h2><p>Scan your paper or enter the goals your physio gave you.</p></div></div><form id="physioPlanForm" class="plan-form"><label>Diagnosis or focus<input id="planDiagnosis" maxlength="120" placeholder="Optional"></label><label>Instructions from your physio<textarea id="planInstructions" maxlength="500" placeholder="Movement, sets, reps, precautions"></textarea></label><div class="plan-grid"><label>Sessions per week<input id="planSessions" type="number" min="0" max="14" placeholder="e.g. 3"></label><label>Reps per session<input id="planReps" type="number" min="0" max="200" placeholder="e.g. 8"></label></div><button class="primary" type="submit">Save plan</button><div class="plan-summary" id="planSummary" aria-live="polite"></div><p class="fine-print">Progress is compared with the targets you enter. Follow your physio’s advice; this app does not interpret diagnoses.</p></form><div class="upload-row"><label class="secondary upload-button" for="diagnosisFile">Scan paper</label><input id="diagnosisFile" type="file" accept="application/pdf,image/*" hidden><span class="upload-hint">PDF or photo · scan runs on this device</span></div><div id="scanStatus" class="scan-status" role="status" aria-live="polite"></div><details id="scanReview" class="scan-review" hidden><summary>Review text found on paper</summary><textarea id="scanText" readonly></textarea><button type="button" id="applyScan" class="secondary">Fill plan fields from paper</button></details><div id="documentList" class="media-list"></div></section><section class="card panel"><div class="panel-top"><div><h2>Session photos</h2><p>Take optional snapshots during practice, then review them here.</p></div><span class="optional">Private</span></div><p class="fine-print">Photos are only taken when you press Capture photo. Live video is not saved.</p><div id="photoGallery" class="photo-gallery"><div class="media-empty">No session photos yet.</div></div></section>`;
-  progressAside.append(progressTools);
-  const capture = document.createElement('button'); capture.type = 'button'; capture.className = 'secondary'; capture.id = 'capturePhoto'; capture.textContent = 'Capture photo'; capture.disabled = true; capture.title = 'Start a camera session to capture a photo.';
-  $('cameraRequirement').before(capture);
-  // Keep the primary session actions visible; reveal device choices on demand.
-  const cameraOptions = document.createElement('details'); cameraOptions.className = 'camera-options';
-  cameraOptions.innerHTML = '<summary>Movement & camera settings</summary><div class="camera-option-fields"></div>';
-  const optionFields = cameraOptions.querySelector('div');
-  [['exerciseSelect','Movement'],['bodySide','Body side'],['cameraSelect','Camera']].forEach(([id,label]) => {
-    const field = document.createElement('label'); field.textContent = label; field.append($(id)); optionFields.append(field);
-  });
-  optionFields.append($('switchCamera')); $('movement').append(cameraOptions);
-  buildPushupCoach();
-  // Progress has three separate workspaces, rather than a chart beside a long form.
-  const progressNav = document.createElement('nav'); progressNav.className = 'record-nav'; progressNav.setAttribute('aria-label','Progress views');
-  progressNav.innerHTML = '<button type="button" aria-pressed="true" aria-controls="record-overview" data-record-view="overview">Overview</button><button type="button" aria-pressed="false" aria-controls="record-photos" data-record-view="photos">Session photos</button><button type="button" aria-pressed="false" aria-controls="record-plan" data-record-view="plan">Care plan</button>';
-  const overview = document.createElement('section'); overview.id = 'record-overview'; overview.className = 'record-view';
+  progressTools.innerHTML = `<section class="card panel"><div class="panel-top"><div><h2>My physiotherapy plan</h2><p>Scan your paper or enter the goals your physiotherapist gave you.</p></div></div><form id="physioPlanForm" class="plan-form"><label>Diagnosis or focus<input id="planDiagnosis" maxlength="120" placeholder="Optional"></label><label>Instructions from your physio<textarea id="planInstructions" maxlength="500" placeholder="Movement, sets, reps, precautions"></textarea></label><div class="plan-grid"><label>Sessions per week<input id="planSessions" type="number" min="0" max="14" placeholder="e.g. 3"></label><label>Reps per session<input id="planReps" type="number" min="0" max="200" placeholder="e.g. 8"></label></div><button class="primary" type="submit">Save plan</button><div class="plan-summary" id="planSummary" aria-live="polite"></div><p class="fine-print">Progress is compared with the targets you enter. Follow your physio’s advice; this app does not interpret diagnoses.</p></form><div class="upload-row"><label class="secondary upload-button" for="diagnosisFile">Upload diagnosis</label><input id="diagnosisFile" type="file" accept="application/pdf,image/*" hidden><span class="upload-hint">PDF or photo · scanned on this device</span></div><div id="scanStatus" class="scan-status" role="status" aria-live="polite"></div><details id="scanReview" class="scan-review" hidden><summary>Review text found on paper</summary><textarea id="scanText" readonly></textarea><button type="button" id="applyScan" class="secondary">Fill plan fields from paper</button></details><div id="documentList" class="media-list"></div></section><section class="card panel"><div class="panel-top"><div><h2>Session photos</h2><p>Review photos you chose to save during practice.</p></div><span class="optional">Private to this device</span></div><p class="fine-print">Video is not saved. A photo is stored only when you capture it.</p><div id="photoGallery" class="photo-gallery"><div class="media-empty">No session photos yet.</div></div></section>`;
+  const planPanel = progressTools.children[0]; const photosPanel = progressTools.children[1];
+  byName.plan.append(planPanel, report);
+  homePhotos.append(photosPanel);
+
   const progressTotals = document.createElement('div'); progressTotals.className = 'record-totals'; progressTotals.id = 'recordTotals';
   const measurement = document.createElement('div'); measurement.className = 'measurement-picker';
   measurement.innerHTML = '<label for="progressMovement">Movement</label><select id="progressMovement" aria-label="Progress movement">'+$('exerciseSelect').innerHTML+'</select><label for="progressSide">Side</label><select id="progressSide" aria-label="Progress body side">'+$('bodySide').innerHTML+'</select>';
-  overview.append(progressTotals, measurement, progressMain);
-  const planView = document.createElement('section'); planView.id = 'record-plan'; planView.className = 'record-view care-plan-view'; planView.hidden = true;
-  const photosView = document.createElement('section'); photosView.id = 'record-photos'; photosView.className = 'record-view'; photosView.hidden = true;
-  const [planPanel, photosPanel] = progressTools.children;
-  planView.append(planPanel); photosView.append(photosPanel);
-  progressLayout.remove(); byName.progress.append(progressNav, overview, photosView, planView);
-  progressNav.querySelectorAll('button').forEach(button => button.addEventListener('click', () => {
-    progressNav.querySelectorAll('button').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
-    [overview,photosView,planView].forEach(view => { view.hidden = view.id !== `record-${button.dataset.recordView}`; });
-  }));
+  byName.progress.insertBefore(progressTotals, progressLayout); byName.progress.insertBefore(measurement, progressLayout);
+  const disclaimerSlot = document.createElement('div'); disclaimerSlot.className = 'progress-disclaimer'; disclaimerSlot.append(disclaimer); byName.progress.append(disclaimerSlot);
   [['progressMovement','exerciseSelect'],['progressSide','bodySide']].forEach(([progressId, practiceId]) => {
     $(progressId).addEventListener('change', () => { $(practiceId).value = $(progressId).value; $(practiceId).dispatchEvent(new Event('change')); });
   });
   const week = document.createElement('section'); week.className = 'week-journal'; week.innerHTML = '<div class="week-heading"><h2>Your week</h2><span id="weekCount"></span></div><div class="week-days" id="weekDays"></div>';
-  byName.home.insertBefore(week,homeLinks);
-  // A consistent stroke icon family replaces platform-dependent text symbols.
-  const navPaths = { home:'M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9', move:'m8 5 4-2 3 4 5 2M12 4l-2 8 5 3 2 6M10 12l-5 8M4 10l5-2', checkin:'M12 20S3 15 3 8a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 7-9 12-9 12Z', progress:'M4 3v17h17M7 14l4-4 4 2 5-7', visit:'M6 3h9l4 4v14H6ZM14 3v5h5M9 12h7M9 16h7' };
+  byName.home.append(week);
+
+  const navPaths = { home:'M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9', move:'m8 5 4-2 3 4 5 2M12 4l-2 8 5 3 2 6M10 12l-5 8M4 10l5-2', plan:'M6 3h9l4 4v14H6ZM14 3v5h5M9 12h7M9 16h7', progress:'M4 3v17h17M7 14l4-4 4 2 5-7', profile:'M20 21a8 8 0 0 0-16 0M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', checkin:'M12 20S3 15 3 8a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 7-9 12-9 12Z', visit:'M6 3h9l4 4v14H6ZM14 3v5h5M9 12h7M9 16h7' };
   document.querySelectorAll('.nav button, .mobile-nav button').forEach(button => {
-    const icon = button.querySelector('span'); icon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${navPaths[button.dataset.screen]}"/></svg>`;
+    const icon = button.querySelector('span'); if (icon && navPaths[button.dataset.screen]) icon.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="'+navPaths[button.dataset.screen]+'"/></svg>';
   });
   const visitGuide = document.createElement('section'); visitGuide.className = 'visit-guide';
   visitGuide.innerHTML = '<div class="visit-guide-icon">✳</div><div><b>Your note stays private.</b><p>Review it, then copy or download to share.</p></div>';
-  byName.visit.append(report, visitGuide, disclaimer);
+  byName.plan.append(visitGuide);
   content.querySelector('.layout')?.remove(); content.querySelector('.lower')?.remove();
+
+  const profileCard = document.createElement('section'); profileCard.className = 'profile-card card';
+  profileCard.innerHTML = '<div class="profile-identity"><span class="avatar profile-avatar">J</span><div><span class="home-kicker">YOUR ACCOUNT</span><h2 class="user-name" id="profileName">Your account</h2><p id="profileEmail">Signed in with Auth0</p></div></div><section class="profile-setting"><div><h3>Hands-free controls</h3><p>Use simple hand gestures to scroll, pause the camera view or control a session.</p></div><div id="profileHandControlsSlot"></div><div class="profile-hand-status"><span id="profileHandControlStatus">Hand controls are off.</span></div></section><section class="profile-setting profile-privacy"><div><h3>Camera privacy</h3><p>Movement is processed on your device. The camera only runs after you enable it.</p></div><button type="button" class="quiet" data-open-screen="move">Practice settings →</button></section><div class="profile-signout-slot" id="profileSignOutSlot"></div>';
+  byName.profile.append(profileCard);
+  $('profileHandControlsSlot').append($('handControlsToggle'));
+  const signOut = document.createElement('button'); signOut.id = 'authAction'; signOut.type = 'button'; signOut.className = 'profile-signout'; signOut.textContent = 'Sign out'; signOut.hidden = true; $('profileSignOutSlot').append(signOut);
+
   let activeScreen = 'home';
-  const switchTo = (key) => {
+  const switchTo = (requestedKey) => {
+    const key = requestedKey === 'visit' ? 'plan' : requestedKey;
     if (!byName[key]) return;
-    stopPalmScroll();handControls.commands.cancel();
+    stopPalmScroll(); handControls.commands.cancel();
     if (activeScreen === 'move' && key !== 'move' && app.running) { toast('Finish the active session before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.autoCalibration.active) { toast('Finish calibration before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.countdownActive) cancelCountdown();
-    const keepCameraForHands=handControls.enabled;
+    if (key !== 'move') app.autoStartFromHome = false;
+    const keepCameraForHands = handControls.enabled;
     if (activeScreen === 'move' && key !== 'move' && (app.stream || app.cameraAcquiring) && !keepCameraForHands) {
       app.cameraRequest++; app.cameraAcquiring = false;
       setHandControlsEnabled(false);
       app.stream?.getTracks().forEach((track) => track.stop()); app.stream = null; cancelAnimationFrame(app.raf); app.raf = 0;
       $('video').srcObject = null; $('video').style.display = 'none'; $('cameraEmpty').style.display = 'grid';
       $('trackingStatus').classList.remove('show'); cameraState('Camera off', 'neutral', 'Allow camera to check framing.', '0 joints');
-      $('startBtn').disabled = true;
-      syncCameraControl();
+      $('startBtn').disabled = true; syncCameraControl();
     }
     activeScreen = key;
     Object.values(byName).forEach((screen) => { screen.hidden = screen.dataset.screenView !== key; screen.classList.toggle('screen-active', !screen.hidden); });
@@ -1192,16 +1205,26 @@ function buildAppScreens() {
       button.setAttribute('aria-current', active ? 'page' : 'false');
     });
     document.querySelector('.breadcrumb b').textContent = key === 'home' ? 'Home' : screens.find((screen) => screen.dataset.screenView === key)?.querySelector('h1')?.textContent || 'Home';
-    history.replaceState(null, '', `#${key}`);
+    history.replaceState(null, '', '#'+key);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
   document.querySelectorAll('[data-screen]').forEach((button) => button.addEventListener('click', () => switchTo(button.dataset.screen)));
   document.querySelectorAll('[data-open-screen]').forEach((button) => button.addEventListener('click', () => switchTo(button.dataset.openScreen)));
+  $('homeUploadDiagnosis').addEventListener('click', () => { switchTo('plan'); $('diagnosisFile').click(); });
+  $('homeStartSession').addEventListener('click', async () => {
+    if (app.running || app.countdownActive || app.autoCalibration.active) { switchTo('move'); return; }
+    switchTo('move'); if (app.cameraPaused) setCameraViewPaused(false);
+    app.autoStartFromHome = true;
+    $('trackingTitle').textContent = 'Getting your camera ready';
+    $('trackingCopy').textContent = 'Your session will begin after you are in view.';
+    if (!app.stream || !app.landmarker) await startCamera();
+    else if (app.poseReady) { app.autoStartFromHome = false; beginSession(false); }
+    else cameraState('Finding your position', 'neutral', 'Step into view. The session will start when your joints are visible.');
+  });
   const initial = location.hash.slice(1);
   switchTo(byName[initial] ? initial : 'home');
-  return { switchTo };
+  return { switchTo, screens: byName };
 }
-
 function renderJournalOverview(rows) {
   if (!$('weekDays')) return;
   const practice = rows.filter(row => !row.checkin && !row.demo);
@@ -1217,6 +1240,18 @@ function renderJournalOverview(rows) {
   const confidence = [...rows].reverse().find(row => Number.isFinite(row.confidence));
   $('recordTotals').innerHTML = `<div><span>Sessions recorded</span><strong>${practice.length}</strong></div><div><span>Latest pain</span><strong>${pain?`${pain.pain}<small> / 10</small>`:'—'}</strong></div><div><span>Latest confidence</span><strong>${confidence?`${confidence.confidence}<small> / 5</small>`:'—'}</strong></div>`;
   $('progressMovement').value = $('exerciseSelect').value; $('progressSide').value = $('bodySide').value;
+}
+
+function renderClimb(rows) {
+  const ranks = ['Trailhead', 'Forest Switchback', 'Alpine Ridge', 'High Camp', 'Summit'];
+  const checkpoints = [[105,264],[419,174],[660,120],[887,63],[985,24]];
+  const sessions = rows.filter(row => !row.checkin && !row.demo).length;
+  const rank = Math.min(ranks.length - 1, sessions);
+  const [x,y] = checkpoints[rank];
+  $('climbRankName').textContent = ranks[rank];
+  $('climbStep').textContent = rank === ranks.length - 1 ? `Summit reached · ${sessions} sessions` : `Rank ${rank + 1} of ${ranks.length} · ${sessions} ${sessions === 1 ? 'session' : 'sessions'} logged`;
+  $('climbMarker').setAttribute('cx', String(x)); $('climbMarker').setAttribute('cy', String(y));
+  $('climbRouteProgress').setAttribute('stroke-dasharray', `${Math.round(rank / (ranks.length - 1) * 100)} 100`);
 }
 
 const appNavigation = buildAppScreens();
@@ -1357,8 +1392,9 @@ function applyAuthProfile(user) {
   const initial = (name.trim()[0] || 'U').toUpperCase();
   document.querySelectorAll('.user-name').forEach((node) => { node.textContent = name; });
   document.querySelectorAll('.avatar').forEach((node) => { node.textContent = initial; node.setAttribute('aria-label', name); });
-  const heading = document.querySelector('.welcome h1');
-  if (heading) heading.textContent = `Good to see you, ${name.split(/\s+/)[0]}.`;
+  const greeting = $('homeGreeting');
+  if (greeting) greeting.textContent = `WELCOME BACK, ${name.split(/\s+/)[0].toUpperCase()}`;
+  if ($('profileEmail')) $('profileEmail').textContent = user?.email || 'Signed in with Auth0';
 }
 
 const AUTH_STATUS_DEFAULT = 'Sign-in is handled securely by Auth0. Formnote never sees your password.';
@@ -1451,7 +1487,7 @@ companion = createCompanion({
   },
   resetIncompleteCycle: () => { app.phase = 'ready'; app.sessionStartAngle = null; }
 });
-carePages = createCarePages({ getScope:()=>activeDataScope, getRows:readSessions, setRows:saveSessions,
+carePages = createCarePages({ getScope:()=>activeDataScope, getRows:readSessions, setRows:saveSessions, getMovement:()=> $('exerciseSelect').value,
   getPlan:readPlan, getName:()=>authUser?.name || '', navigate:key=>appNavigation.switchTo(key), chooseMovement:movement=>{if(app.running||app.autoCalibration.active){toast('Finish the current session or calibration first.');return;}$('exerciseSelect').value=movement;$('exerciseSelect').dispatchEvent(new Event('change'));appNavigation.switchTo('move');}, clearCheckin:clearCheckinAnswers });
 // Pressing Back from the Auth0 page restores this page from memory with the buttons still disabled.
 window.addEventListener('pageshow', (event) => { if (event.persisted && authClient && !authUser) setAuthGateBusy(false); });

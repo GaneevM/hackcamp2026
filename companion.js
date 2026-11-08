@@ -3,27 +3,26 @@ import { createRepChime } from './rep-sound.js';
 
 export function createCompanion(options) {
   const panel = document.createElement('section');
-  panel.className = 'card panel session-companion';
+  panel.className = 'card panel session-companion voice-controls-card';
   panel.style.marginTop = '16px';
   panel.innerHTML = `
     <div class="companion-heading">
-      <div class="companion-name"><span class="voice-symbol" aria-hidden="true">◖◗</span><div><h2>Your companion</h2><p>Hear encouragement. Keep your eyes on your movement.</p></div></div>
+      <div class="companion-name"><span class="voice-symbol" aria-hidden="true">◖◗</span><div><h2>Voice controls</h2><p>Choose how often you hear spoken exercise cues.</p></div></div>
       <label class="voice-toggle"><input type="checkbox" data-id="enabled" checked><span data-id="voiceLabel">Voice on</span></label>
     </div>
     <div class="companion-toolbar">
-      <div class="voice-modes" role="group" aria-label="Companion style">
+      <div class="voice-modes" role="group" aria-label="Voice style">
         <button type="button" data-id="modeQuiet" aria-pressed="false">Quiet<span>Only tracking alerts</span></button>
-        <button type="button" data-id="modeConcise" aria-pressed="false">Concise<span>Short, simple cues</span></button>
-        <button type="button" data-id="modeEncouraging" aria-pressed="true">Encouraging<span>A little motivation</span></button>
+        <button type="button" data-id="modeConcise" aria-pressed="true">Normal<span>Standard spoken cues</span></button>
       </div>
-      <select data-id="mode" hidden aria-label="Companion style"><option value="quiet">Quiet</option><option value="concise">Concise</option><option value="encouraging" selected>Encouraging</option></select>
+      <select data-id="mode" hidden aria-label="Voice style"><option value="quiet">Quiet</option><option value="concise" selected>Normal</option></select>
     </div>
     <p class="companion-activity" data-id="activity">Ready when you are. Start a session above.</p>
     <p class="companion-event" data-id="event" aria-live="polite"></p>
     <details class="voice-settings"><summary>Voice settings</summary>
       <div class="voice-settings-grid">
         <label>Browser backup voice<select data-id="voice"><option value="">System default</option></select></label>
-        <label>Playback<select data-id="source"><option value="gemini" selected>Gemini voice · browser backup</option><option value="browser">Browser voice only</option></select></label>
+        <label>Playback<select data-id="source"><option value="gemini" selected>Enhanced voice · browser backup</option><option value="browser">Browser voice only</option></select></label>
       </div>
       <div class="companion-actions"><button type="button" class="secondary" data-id="preview">Preview voice</button><button type="button" class="quiet" data-id="stop">Stop speaking</button></div>
       <p class="companion-technical" data-id="status" role="status">Checking saved sessions…</p>
@@ -33,11 +32,11 @@ export function createCompanion(options) {
       <p class="followup-question" data-id="question"></p>
       <button type="button" class="quiet" data-id="read">Listen to question</button>
       <label>Your note <span>Optional</span><textarea data-id="answer" maxlength="2000" rows="3" placeholder="Anything you’d like your physio to know?"></textarea></label>
-      <div class="companion-actions"><button type="button" class="primary" data-id="save">Save note</button><button type="button" class="secondary" data-id="report">Review session &amp; AI options</button></div>
+      <div class="companion-actions"><button type="button" class="primary" data-id="save">Save note</button><button type="button" class="secondary" data-id="report">Review session report</button></div>
       <p class="companion-technical" data-id="kind"></p>
       <pre class="companion-summary" data-id="summary" hidden></pre>
     </div>
-    <details class="companion-demo"><summary>Explore the fictional AI demo</summary>
+    <details class="companion-demo"><summary>Try a sample session</summary>
       <p>Try a Gemini follow-up using a fictional session. Your camera measurements stay in your local journal.</p>
       <div class="companion-actions"><button type="button" class="secondary" data-id="demo" disabled>Load fictional session</button><button type="button" class="quiet" data-id="testRep">Preview rep chime</button></div>
     </details>
@@ -52,13 +51,13 @@ export function createCompanion(options) {
   const chime = createRepChime();
   try { preferredVoice = localStorage.getItem('exercise-demo-browser-voice') || ''; } catch {}
   el('enabled').checked = true;
-  el('mode').value = 'encouraging';
+  el('mode').value = 'concise';
   el('source').value = 'gemini';
   try {
     const prefs = JSON.parse(localStorage.getItem('formnote-companion-preferences') || 'null');
     if (prefs) {
       el('enabled').checked = prefs.enabled !== false;
-      if (['quiet', 'concise', 'encouraging'].includes(prefs.mode)) el('mode').value = prefs.mode;
+      el('mode').value = prefs.mode === 'quiet' ? 'quiet' : 'concise';
       if (prefs.version === 2 && ['browser', 'gemini'].includes(prefs.source)) el('source').value = prefs.source;
     }
   } catch {}
@@ -69,7 +68,7 @@ export function createCompanion(options) {
     el('voiceLabel').textContent = el('enabled').checked ? 'Voice on' : 'Voice muted';
     const quickVoice = document.getElementById?.('practiceVoice');
     if (quickVoice) { quickVoice.textContent = el('voiceLabel').textContent; quickVoice.ariaPressed = String(el('enabled').checked); }
-    for (const mode of ['quiet', 'concise', 'encouraging']) el('mode' + mode[0].toUpperCase() + mode.slice(1)).ariaPressed = String(el('mode').value === mode);
+    for (const mode of ['quiet', 'concise']) el('mode' + mode[0].toUpperCase() + mode.slice(1)).ariaPressed = String(el('mode').value === mode);
   }
   syncVoiceControls(); saveVoicePreferences();
   const status = text => { el('status').textContent = text; };
@@ -113,8 +112,8 @@ export function createCompanion(options) {
   el('stop').onclick = () => { stop(); status('Speech stopped. Future session events may speak.'); };
   el('testRep').onclick = () => { chime.unlock(); event('rep_completed'); };
   el('preview').onclick = () => { stop(); event('session_started'); };
-  el('mode').onchange = () => { stop(); syncVoiceControls(); saveVoicePreferences(); status('Companion style updated.'); };
-  for (const mode of ['quiet', 'concise', 'encouraging']) el('mode' + mode[0].toUpperCase() + mode.slice(1)).onclick = () => { el('mode').value = mode; el('mode').onchange(); };
+  el('mode').onchange = () => { stop(); syncVoiceControls(); saveVoicePreferences(); status('Voice style updated.'); };
+  for (const mode of ['quiet', 'concise']) el('mode' + mode[0].toUpperCase() + mode.slice(1)).onclick = () => { el('mode').value = mode; el('mode').onchange(); };
   el('source').onchange = () => { stop(); saveVoicePreferences(); };
   el('enabled').onchange = () => {
     stop(); syncVoiceControls(); saveVoicePreferences();
@@ -281,7 +280,7 @@ export function createCompanion(options) {
       if (latest) present({ ...latest, kind: 'local', question: localQuestion(latest.session, latest.metrics), answer: latest.userReportedContext.at(-1)?.answer || '' });
     } catch (error) { online = false; el('demo').disabled = true; status(error.message); }
   }
-  for (const mode of ['quiet', 'concise', 'encouraging']) {
+  for (const mode of ['quiet', 'concise']) {
     fetch(`/voice-assets/${mode}.json`).then(r => r.ok ? r.json() : null).then(m => { if (m) manifests[mode] = m; }).catch(() => {});
   }
   reloadHistory();
