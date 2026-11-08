@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fitPointerMapReliable, isIndexPointing, isOpenPalm, isFist, mapFingerToScreen, summarizePointerSamples, pointerBodyReference, pointerCoordinates, pointerHandCrop, restoreCroppedHand, PointerFilter, PointerSwipeTracker, PointerButtonLatch, PalmScrollController } from '../air-pointer.mjs';
+import { fitPointerMapReliable, isIndexPointing, isOpenPalm, isFist, pointerFingerRatios, learnPointingProfile, trackedHandCrop, selectPointerHand, mapFingerToScreen, summarizePointerSamples, pointerBodyReference, pointerCoordinates, pointerHandCrop, restoreCroppedHand, PointerFilter, PointerSwipeTracker, PointerButtonLatch, PalmScrollController } from '../air-pointer.mjs';
 
 test('pointer sample summary rejects isolated tracking spikes', () => {
   const samples=Array.from({length:12},(_,index)=>({x:.4+(index%3-.9)*.002,y:.6+(index%4-1.5)*.002}));
@@ -140,4 +140,27 @@ test('a fist is distinct from pointing and an open palm',()=>{
   assert.equal(isFist(hand),true);assert.equal(isOpenPalm(hand),false);assert.equal(isIndexPointing(hand),false);
   hand[8]={x:1.3,y:0,z:0};assert.equal(isFist(hand),false);assert.equal(isIndexPointing(hand),true);
   for(const tip of [8,12,16,20])hand[tip]={x:1.3,y:0,z:0};assert.equal(isFist(hand),false);assert.equal(isOpenPalm(hand),true);
+});
+test('personal pointing profile recognizes a foreshortened index without accepting a fist or palm',()=>{
+  const hand=Array.from({length:21},()=>({x:0,y:0,z:0}));
+  for(const [pip,tip] of [[6,8],[10,12],[14,16],[18,20]]){hand[pip]={x:1,y:0,z:0};hand[tip]={x:1.02,y:0,z:0};}hand[8]={x:1.07,y:0,z:0};
+  assert.equal(isIndexPointing(hand),false);
+  const profile=learnPointingProfile([pointerFingerRatios(hand),pointerFingerRatios(hand)]);assert.ok(profile);
+  assert.equal(isIndexPointing(hand,profile),true);
+  for(const tip of [8,12,16,20])hand[tip]={x:.7,y:0,z:0};assert.equal(isIndexPointing(hand,profile),false);
+  for(const tip of [8,12,16,20])hand[tip]={x:1.3,y:0,z:0};assert.equal(isIndexPointing(hand,profile),false);
+  assert.equal(learnPointingProfile([pointerFingerRatios(hand)]),null);
+});
+test('a hand alone supplies a crop when body landmarks disappear',()=>{
+  const hand=Array.from({length:21},(_,i)=>({x:.7+(i%4)*.008,y:.2+i*.003,z:0}));
+  const crop=trackedHandCrop(hand,1280,720);
+  assert.ok(crop&&crop.size>=100&&crop.x>=0&&crop.y>=0&&crop.x+crop.size<=1280&&crop.y+crop.size<=720);
+  assert.equal(trackedHandCrop(null,1280,720),null);
+});
+test('hand selection prefers the pointing hand and retains its label',()=>{
+  const fist=Array.from({length:21},()=>({x:0,y:0,z:0}));
+  for(const [pip,tip] of [[6,8],[10,12],[14,16],[18,20]]){fist[pip]={x:1,y:0,z:0};fist[tip]={x:.7,y:0,z:0};}
+  const point=structuredClone(fist);point[8]={x:1.3,y:0,z:0};
+  assert.equal(selectPointerHand([fist,point],['Left','Right'],null,true),1);
+  assert.equal(selectPointerHand([point,fist],['Right','Left'],'Right'),0);
 });

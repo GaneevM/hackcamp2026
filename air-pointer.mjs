@@ -99,6 +99,20 @@ export function pointerHandCrop(pose,width,height,side=0) {
 export function restoreCroppedHand(hand,crop,width,height) {
   return hand.map(p=>({...p,x:(crop.x+p.x*crop.size)/width,y:(crop.y+p.y*crop.size)/height,z:(p.z||0)*crop.size/width}));
 }
+export function trackedHandCrop(hand,width,height) {
+  if(!Array.isArray(hand)||hand.length<21)return null;
+  const xs=hand.map(p=>p.x*width),ys=hand.map(p=>p.y*height);
+  if(![...xs,...ys].every(Number.isFinite))return null;
+  const left=Math.min(...xs),right=Math.max(...xs),top=Math.min(...ys),bottom=Math.max(...ys);
+  const size=Math.min(width,height,Math.max(100,(right-left)*2.7,(bottom-top)*2.7));
+  return {x:Math.max(0,Math.min(width-size,(left+right-size)/2)),y:Math.max(0,Math.min(height-size,(top+bottom-size)/2)),size};
+}
+export function selectPointerHand(hands,labels=[],preferredLabel=null,preferPointing=false) {
+  if(!hands?.length)return -1;
+  if(preferredLabel){const match=labels.indexOf(preferredLabel);if(match>=0)return match;}
+  if(preferPointing){const match=hands.findIndex(hand=>!isOpenPalm(hand)&&!isFist(hand)&&learnPointingProfile([pointerFingerRatios(hand)]));if(match>=0)return match;}
+  return 0;
+}
 
 export class PointerFilter {
   constructor(){this.reset();}
@@ -208,12 +222,29 @@ function distance3(a,b) {
   return Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
 }
 
-export function isIndexPointing(hand) {
+export function isIndexPointing(hand,profile=null) {
   if (!Array.isArray(hand) || hand.length < 21) return false;
+  if(profile?.ratios?.length===4){
+    const ratios=pointerFingerRatios(hand);
+    return !!ratios&&!isFist(hand)&&!isOpenPalm(hand)&&ratios[0]>1.035&&ratios[0]>median(ratios.slice(1))+.02&&ratios.every((value,index)=>Math.abs(value-profile.ratios[index])<profile.tolerance[index]);
+  }
   const wrist=hand[0];
   const ratio=(pip,tip)=>distance3(wrist,hand[tip])/Math.max(.0001,distance3(wrist,hand[pip]));
   const index=ratio(6,8),others=[ratio(10,12),ratio(14,16),ratio(18,20)];
   return index>1.08 && index>Math.max(...others)+.025 && others.every(value=>value<1.38);
+}
+
+export function pointerFingerRatios(hand) {
+  if(!Array.isArray(hand)||hand.length<21||!hand.every(p=>p&&[p.x,p.y,p.z].every(Number.isFinite)))return null;
+  return [[6,8],[10,12],[14,16],[18,20]].map(([pip,tip])=>distance3(hand[0],hand[tip])/Math.max(.0001,distance3(hand[0],hand[pip])));
+}
+export function learnPointingProfile(samples) {
+  const valid=samples.filter(sample=>Array.isArray(sample)&&sample.length===4&&sample.every(Number.isFinite));
+  if(!valid.length)return null;
+  const ratios=[0,1,2,3].map(index=>median(valid.map(sample=>sample[index])));
+  if(ratios[0]<=1.035||ratios[0]<=median(ratios.slice(1))+.02)return null;
+  const tolerance=ratios.map((ratio,index)=>Math.max(.22,median(valid.map(sample=>Math.abs(sample[index]-ratio)))*5));
+  return {ratios,tolerance};
 }
 
 export function isOpenPalm(hand) {
