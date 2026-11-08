@@ -1,4 +1,4 @@
-.air-pointer-cursor{position:fixed;z-index:12000;width:42px;height:42px;border:2px solid #fff;border-radius:50%;background:conic-gradient(#2d6c58 var(--dwell,0%),rgba(255,255,255,.42) 0);box-shadow:0 1px 8px #13271f77;transform:translate(-50%,-50%);pointer-events:none}
+.air-pointer-cursor{position:fixed;left:0;top:0;z-index:12000;width:42px;height:42px;border:2px solid #fff;border-radius:50%;background:conic-gradient(#2d6c58 var(--dwell,0%),rgba(255,255,255,.42) 0);box-shadow:0 1px 8px #13271f77;will-change:transform;transition:none!important;pointer-events:none}
 .air-pointer-cursor::after{content:"";position:absolute;inset:4px;border-radius:50%;background:#255b4a}
 .air-pointer-cursor i{position:absolute;z-index:1;inset:12px;border-radius:50%;background:#fff}
 .air-pointer-status{position:fixed;z-index:11999;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);max-width:min(92vw,440px);padding:10px 15px;background:#17392f;color:white;border-radius:10px;font-size:13px;text-align:center;box-shadow:0 5px 20px #0003;pointer-events:none}
@@ -7,7 +7,12 @@
 .pointer-calibration-panel h2{font-size:19px;margin:0 0 7px}
 .pointer-calibration-panel p{font-size:13px;color:#58665f;margin:0 0 10px}
 .pointer-calibration-step{font-size:12px;font-weight:700;color:#28624d;margin-bottom:8px}
+.pointer-calibration-panel canvas{display:block;width:160px;height:90px;object-fit:cover;margin:10px auto 12px;border-radius:6px;background:#14231f}
+.pointer-calibration-panel progress{width:100%;height:6px;accent-color:#28624d;display:block;margin:10px 0}
+.pointer-calibration-panel #pointerCalibrationFeedback{font-size:12px;min-height:2.8em;margin:9px 0 4px}
+.pointer-calibration [hidden],.air-pointer-cursor[hidden],.air-pointer-status[hidden]{display:none!important}
 .pointer-calibration-target{position:absolute;width:62px;height:62px;border:2px solid #fff;border-radius:50%;transform:translate(-50%,-50%);display:grid;place-items:center;box-shadow:0 0 0 6px #255b4a55;pointer-events:none}
 .pointer-calibration-target i{width:13px;height:13px;border-radius:50%;background:#fff}
 .air-hover-target{outline:3px solid #2d775d!important;outline-offset:4px!important}
 @media(max-width:650px){.pointer-calibration-panel{top:10px;padding:15px}.air-pointer-status{font-size:12px;bottom:calc(72px + env(safe-area-inset-bottom))}}
+@media(max-height:700px){.pointer-calibration-panel{top:8px;padding:12px 16px}.pointer-calibration-panel canvas{width:112px;height:63px;margin:6px auto}.pointer-calibration-panel p{font-size:12px;line-height:1.35}.pointer-calibration-panel #pointerCalibrationFeedback{min-height:2.1em;margin:5px 0}.pointer-calibration-panel h2{font-size:17px}}
