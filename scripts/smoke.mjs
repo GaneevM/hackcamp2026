@@ -13,6 +13,8 @@ async function get(path) {
 async function smoke() {
   const release=await (await get('release.json')).json();
   if(release.commit!==expected.commit)throw new Error('The live release does not match this commit.');
+  const page=await get(''),policy=page.headers.get('permissions-policy')||'';
+  if(!/(?:^|,)\s*microphone\s*=\s*\(\s*self\s*\)/.test(policy))throw new Error('The page Permissions-Policy blocks microphone help. Allow microphone=(self).');
   for(const [file,hash] of Object.entries(expected.assets)) {
     if(file==='_headers')continue;
     const response=await get(file),body=Buffer.from(await response.arrayBuffer());

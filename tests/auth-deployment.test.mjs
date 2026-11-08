@@ -83,3 +83,11 @@ test('authentication never clears the local session or media stores',()=>{
   const app=fs.readFileSync('app.js','utf8');const flow=app.slice(app.indexOf('let authSession ='),app.indexOf('companion = createCompanion'));
   assert.doesNotMatch(flow,/saveSessions\(\[\]|localStorage\.(clear|removeItem)|deleteDatabase/);
 });
+
+test('page security policy allows own camera and microphone while blocking geolocation',()=>{
+  const headers=fs.readFileSync('_headers','utf8');
+  const policy=headers.split(/\r?\n/).find(line=>line.trim().startsWith('Permissions-Policy:'));
+  assert.ok(policy,'A page permissions policy must be configured');
+  assert.match(policy,/camera=\(self\)/);assert.match(policy,/microphone=\(self\)/);assert.match(policy,/geolocation=\(\)/);
+  assert.doesNotMatch(policy,/microphone=\(\)|microphone=\*/);
+});
