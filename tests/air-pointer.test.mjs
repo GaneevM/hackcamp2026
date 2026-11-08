@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fitPointerMapReliable, isIndexPointing, isOpenPalm, mapFingerToScreen, summarizePointerSamples, pointerBodyReference, pointerCoordinates, pointerHandCrop, restoreCroppedHand, PointerFilter, PointerSwipeTracker } from '../air-pointer.mjs';
+import { fitPointerMapReliable, isIndexPointing, isOpenPalm, isFist, mapFingerToScreen, summarizePointerSamples, pointerBodyReference, pointerCoordinates, pointerHandCrop, restoreCroppedHand, PointerFilter, PointerSwipeTracker, PointerButtonLatch, PalmScrollController } from '../air-pointer.mjs';
 
 test('pointer sample summary rejects isolated tracking spikes', () => {
   const samples=Array.from({length:12},(_,index)=>({x:.4+(index%3-.9)*.002,y:.6+(index%4-1.5)*.002}));
@@ -87,11 +87,57 @@ test('swipes require a steady start and stop, emit once, and learn both directio
   assert.equal(held.length,0);
   const down=stroke(tracker,{start:.25,end:.7,at:2775});assert.equal(down.length,1);assert.equal(down[0].direction,'down');
 });
-test('scroll ignores entering frame, diagonal movement, jitter, and tracking gaps',()=>{
+test('swipe calibration ignores entering frame, diagonal movement, jitter, and tracking gaps',()=>{
   const tracker=new PointerSwipeTracker({up:.1,down:.1});
   for(let i=0;i<12;i++)assert.equal(tracker.update({x:.5,y:.8-i*.04},i*75),null);
   tracker.reset();assert.equal(stroke(tracker,{horizontal:.5}).length,0);
   tracker.reset();assert.equal(stroke(tracker,{start:.5,end:.49}).length,0);
   tracker.reset();for(let i=0;i<5;i++)tracker.update({x:.5,y:.6},i*75);
   assert.equal(tracker.update(null,350),null);assert.equal(tracker.update({x:.5,y:.2},700),null);
+});
+
+test('button latch resists tremor and releases on a deliberate exit',()=>{
+  const latch=new PointerButtonLatch(),rect={left:100,right:220,top:100,bottom:142};
+  latch.acquire({x:160,y:120});
+  for(let now=0;now<1000;now+=50)assert.equal(latch.update({x:160+(now%100?12:-12),y:120+(now%100?25:-25)},rect,now),true);
+  assert.equal(latch.update({x:160,y:180},rect,1000),true);
+  assert.equal(latch.update({x:160,y:180},rect,1150),false);
+  latch.acquire({x:160,y:120});assert.equal(latch.update({x:400,y:120},rect,1200),false);
+});
+test('precision filtering damps stationary shaking while following a clear move',()=>{
+  const filter=new PointerFilter(),options={width:1280,height:800,precision:true},values=[];
+  for(let i=0;i<50;i++){const p=filter.update({x:.5+(i%2?1:-1)*.012,y:.5},i*80,options);if(i>12)values.push(p.x);}
+  assert.ok((Math.max(...values)-Math.min(...values))*1280<9);
+  let point;for(let i=0;i<10;i++)point=filter.update({x:.8,y:.7},4000+i*80,options);
+  assert.ok(point.x>.78&&point.y>.68);
+});
+function armPalm(controller,start=0) {for(let i=0;i<5;i++){controller.observe({x:.5,y:.5},start+i*80);controller.tick(start+i*80);}}
+test('open palm deflection scrolls continuously in both directions and farther means faster',()=>{
+  const controller=new PalmScrollController({up:.3,down:.3});armPalm(controller);
+  assert.equal(controller.armed,true);
+  for(let i=0;i<6;i++){controller.observe({x:.5,y:.62},400+i*80,1200);controller.tick(400+i*80);}
+  const slow=controller.targetVelocity;assert.ok(slow>0);
+  for(let i=0;i<6;i++)controller.observe({x:.5,y:.8},900+i*80,1200);
+  assert.ok(controller.targetVelocity>slow*2);
+  let distance=0;
+  for(let i=0;i<100;i++){const now=1400+i*80;controller.observe({x:.5,y:.8},now,1200);distance+=controller.tick(now);}
+  assert.ok(distance>3000,'One held palm should cover a long page');
+  for(let i=0;i<6;i++)controller.observe({x:.5,y:.2},9500+i*80,1200);
+  assert.ok(controller.targetVelocity<0);
+});
+test('neutral jitter, missing hand and explicit stop cannot leave scrolling running',()=>{
+  const controller=new PalmScrollController({up:.3,down:.3});armPalm(controller);
+  for(let i=0;i<10;i++){const now=400+i*80;controller.observe({x:.5,y:.5+(i%2?.01:-.01)},now);assert.equal(controller.tick(now),0);}
+  for(let i=0;i<5;i++){controller.observe({x:.5,y:.8},1300+i*80);controller.tick(1300+i*80);}
+  assert.ok(controller.targetVelocity>0);
+  controller.stop();for(let now=1700;now<2200;now+=16)assert.equal(controller.tick(now),0);
+  armPalm(controller,2300);for(let i=0;i<5;i++){controller.observe({x:.5,y:.8},2700+i*80);controller.tick(2700+i*80);}
+  assert.equal(controller.tick(3300),0);assert.equal(controller.armed,false);
+});
+test('a fist is distinct from pointing and an open palm',()=>{
+  const hand=Array.from({length:21},()=>({x:0,y:0,z:0}));
+  for(const [pip,tip] of [[6,8],[10,12],[14,16],[18,20]]){hand[pip]={x:1,y:0,z:0};hand[tip]={x:.7,y:0,z:0};}
+  assert.equal(isFist(hand),true);assert.equal(isOpenPalm(hand),false);assert.equal(isIndexPointing(hand),false);
+  hand[8]={x:1.3,y:0,z:0};assert.equal(isFist(hand),false);assert.equal(isIndexPointing(hand),true);
+  for(const tip of [8,12,16,20])hand[tip]={x:1.3,y:0,z:0};assert.equal(isFist(hand),false);assert.equal(isOpenPalm(hand),true);
 });

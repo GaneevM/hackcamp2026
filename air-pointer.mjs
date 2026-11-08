@@ -102,20 +102,75 @@ export function restoreCroppedHand(hand,crop,width,height) {
 
 export class PointerFilter {
   constructor(){this.reset();}
-  reset(){this.samples=[];this.point=null;this.at=null;}
-  update(point,now) {
+  reset(){this.samples=[];this.point=null;this.intent=null;this.at=null;this.velocity={x:0,y:0};}
+  update(point,now,{width=1000,height=1000,precision=false}={}) {
     if(!point||![point.x,point.y,now].every(Number.isFinite))return null;
     if(this.at===null||now-this.at>350)this.reset();
     this.samples.push(point);if(this.samples.length>3)this.samples.shift();
     const target={x:median(this.samples.map(p=>p.x)),y:median(this.samples.map(p=>p.y))};
     if(!this.point)this.point={...target};
     else {
-      const distance=Math.hypot(target.x-this.point.x,target.y-this.point.y);
       const dt=Math.max(.001,Math.min(.12,(now-this.at)/1000));
-      const alpha=1-Math.exp(-dt*(5+Math.min(35,distance*110)));
+      const derivativeAlpha=1-Math.exp(-dt*6);
+      this.velocity.x+=(((target.x-(this.intent?.x??target.x))*width/dt)-this.velocity.x)*derivativeAlpha;
+      this.velocity.y+=(((target.y-(this.intent?.y??target.y))*height/dt)-this.velocity.y)*derivativeAlpha;
+      const distance=Math.hypot((target.x-this.point.x)*width,(target.y-this.point.y)*height),deadband=precision?7:3.5;
+      const cutoff=(precision?.65:1.1)+Math.min(9,Math.hypot(this.velocity.x,this.velocity.y)*.0035);
+      const alpha=(1-Math.exp(-dt*2*Math.PI*cutoff))*Math.max(0,1-deadband/Math.max(.001,distance));
       this.point={x:this.point.x+(target.x-this.point.x)*alpha,y:this.point.y+(target.y-this.point.y)*alpha};
     }
-    this.at=now;return {...this.point};
+    this.intent=target;this.at=now;return {...this.point};
+  }
+}
+
+// The pointer stays attached to its acquired control through tremor and isolated
+// samples. A sustained move out of the control, or a large move, releases it.
+export class PointerButtonLatch {
+  reset(){this.origin=null;this.exitAt=null;}
+  constructor(){this.reset();}
+  acquire(point){this.origin={...point};this.exitAt=null;}
+  update(point,rect,now) {
+    if(!this.origin||!point)return false;
+    const moved=Math.hypot(point.x-this.origin.x,point.y-this.origin.y);
+    const outside=point.x<rect.left-14||point.x>rect.right+14||point.y<rect.top-14||point.y>rect.bottom+14;
+    if(!outside||moved<34){this.exitAt=null;return true;}
+    if(moved>90){this.reset();return false;}
+    if(this.exitAt===null)this.exitAt=now;
+    if(now-this.exitAt>=140){this.reset();return false;}
+    return true;
+  }
+}
+
+// Deflect an open palm from a stable neutral position to control scroll speed.
+// stop() is synchronous: a fist, missing frame, or mode change has no inertia.
+export class PalmScrollController {
+  constructor(ranges={up:.25,down:.25}){this.ranges=ranges;this.stop();}
+  stop(){this.anchor=null;this.history=[];this.samples=[];this.lastAt=null;this.tickAt=null;this.targetVelocity=0;this.velocity=0;this.armed=false;}
+  observe(point,now,maxSpeed=1400) {
+    if(!point||![point.x,point.y,now].every(Number.isFinite)){this.stop();return;}
+    if(this.lastAt!==null&&now-this.lastAt>200)this.stop();
+    this.lastAt=now;
+    this.samples.push(point);if(this.samples.length>3)this.samples.shift();
+    const current={x:median(this.samples.map(p=>p.x)),y:median(this.samples.map(p=>p.y))};
+    if(!this.anchor){
+      this.history.push({...current,at:now});this.history=this.history.filter(p=>now-p.at<=300);
+      const tolerance=Math.min(this.ranges.up,this.ranges.down)*.13;
+      if(now-this.history[0].at>=200&&this.history.every(p=>Math.hypot(p.x-current.x,p.y-current.y)<tolerance)){
+        this.anchor={...current};this.armed=true;this.tickAt=now;
+      }
+      return;
+    }
+    const dy=current.y-this.anchor.y,range=Math.max(.015,dy<0?this.ranges.up:this.ranges.down);
+    const deflection=Math.min(1,Math.max(0,(Math.abs(dy)/range-.16)/.84));
+    this.targetVelocity=Math.abs(current.x-this.anchor.x)>range*1.4?0:Math.sign(dy)*maxSpeed*Math.pow(deflection,1.35);
+    if(!this.targetVelocity)this.velocity=0;
+  }
+  tick(now) {
+    if(this.lastAt===null||now-this.lastAt>180){this.stop();return 0;}
+    const dt=this.tickAt===null?0:Math.max(0,Math.min(.04,(now-this.tickAt)/1000));this.tickAt=now;
+    if(!this.armed||!this.targetVelocity){this.velocity=0;return 0;}
+    this.velocity+=(this.targetVelocity-this.velocity)*(1-Math.exp(-dt/0.075));
+    return this.velocity*dt;
   }
 }
 
@@ -165,4 +220,10 @@ export function isOpenPalm(hand) {
   if(!Array.isArray(hand)||hand.length<21)return false;
   const wrist=hand[0];
   return [[6,8],[10,12],[14,16],[18,20]].filter(([pip,tip])=>distance3(wrist,hand[tip])>distance3(wrist,hand[pip])*1.12).length>=3;
+}
+
+export function isFist(hand) {
+  if(!Array.isArray(hand)||hand.length<21)return false;
+  const ratio=(pip,tip)=>distance3(hand[0],hand[tip])/Math.max(.0001,distance3(hand[0],hand[pip]));
+  return ratio(6,8)<1.04&&[[10,12],[14,16],[18,20]].every(([pip,tip])=>ratio(pip,tip)<1.08);
 }

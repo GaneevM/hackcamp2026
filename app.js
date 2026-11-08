@@ -5,7 +5,7 @@ import { WaveCounter } from './session-metrics.js';
 const waveCounter = new WaveCounter();
 import { assessPushup, PushupCounter } from './pushup.mjs';
 import { MovementCounter } from './movement-counter.mjs';
-import { fitPointerMapReliable, mapFingerToScreen, isIndexPointing, isOpenPalm, summarizePointerSamples, pointerBodyReference, pointerCoordinates, pointerHandCrop, restoreCroppedHand, PointerFilter, PointerSwipeTracker } from './air-pointer.mjs';
+import { fitPointerMapReliable, mapFingerToScreen, isIndexPointing, isOpenPalm, isFist, summarizePointerSamples, pointerBodyReference, pointerCoordinates, pointerHandCrop, restoreCroppedHand, PointerFilter, PointerSwipeTracker, PointerButtonLatch, PalmScrollController } from './air-pointer.mjs';
 import { summarizePoseAngles } from './pose-calibration.mjs';
 const pushupCounter = new PushupCounter();
 const movementCounter = new MovementCounter();
@@ -65,7 +65,7 @@ const app = {
 
 let companion = null, carePages = null;
 let visionRuntime = null, visionFiles = null, handLandmarker = null;
-const airPointer = { enabled:false, config:null, lastDetectionAt:0, current:null, target:null, pointAt:0, renderAt:0, pointingAt:null, candidate:null, dwellAt:null, mustRelease:false, releaseAt:null, calibration:null, reference:null, poseAt:0, handFailures:0, handSide:0, filter:new PointerFilter(), swipe:new PointerSwipeTracker() };
+const airPointer = { enabled:false, config:null, lastDetectionAt:0, current:null, target:null, intent:null, pointAt:0, renderAt:0, pointingAt:null, candidate:null, dwellElapsed:0, dwellUpdatedAt:null, gesture:'idle', mustRelease:false, releaseAt:null, calibration:null, reference:null, poseAt:0, handFailures:0, handSide:0, filter:new PointerFilter(), latch:new PointerButtonLatch(), scroll:new PalmScrollController(), scrollSurface:null };
 const pointerCropCanvas=document.createElement('canvas');pointerCropCanvas.width=512;pointerCropCanvas.height=512;
 
 const readSessions = () => { try { return JSON.parse(localStorage.getItem(scopedStorageKey(SESSION_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(SESSION_KEY) : null) ?? '[]'); } catch { return []; } };
@@ -271,7 +271,12 @@ function detectPointerHand() {
   if(airPointer.handFailures%3===2)airPointer.handSide=1-airPointer.handSide;
   if(!airPointer.handLocked&&airPointer.handFailures===0&&pose?.[15]&&pose?.[16])airPointer.handSide=pose[15].y<pose[16].y?0:1;
   const useCrop=body&&body.scale*height<width*.42&&airPointer.handFailures%4!==3;
-  const crop=useCrop?pointerHandCrop(pose,width,height,airPointer.handSide):null;
+  let crop=useCrop?pointerHandCrop(pose,width,height,airPointer.handSide):null;
+  if(crop){
+    const previous=airPointer.handCrop;
+    if(previous?.side===airPointer.handSide&&airPointer.handFailures===0)crop={x:previous.x+(crop.x-previous.x)*.5,y:previous.y+(crop.y-previous.y)*.5,size:previous.size+(crop.size-previous.size)*.5};
+    airPointer.handCrop={...crop,side:airPointer.handSide};
+  }else airPointer.handCrop=null;
   if(crop)pointerCropCanvas.getContext('2d').drawImage(video,crop.x,crop.y,crop.size,crop.size,0,0,512,512);
   const result=handLandmarker.detect(crop?pointerCropCanvas:video);
   if(result.landmarks?.[0]){
@@ -314,12 +319,14 @@ function pointerToast(message) {
 }
 function resetPointerDwell() {
   airPointer.candidate?.classList.remove('air-hover-target');
-  airPointer.candidate=null;airPointer.dwellAt=null;
+  airPointer.candidate=null;airPointer.dwellElapsed=0;airPointer.dwellUpdatedAt=null;airPointer.latch.reset();
+  $('airPointerCursor').classList.remove('is-latched','is-paused');
   $('airPointerCursor').style.setProperty('--dwell','0%');
 }
+function stopPalmScroll() {airPointer.scroll.stop();airPointer.scrollSurface=null;}
 function setPointerEnabled(enabled) {
   airPointer.enabled=enabled;
-  airPointer.target=null;airPointer.current=null;airPointer.filter.reset();airPointer.swipe.reset();airPointer.pointingAt=null;airPointer.reference=null;airPointer.handLocked=false;airPointer.handFailures=0;airPointer.pointAt=0;
+  stopPalmScroll();resetPointerDwell();airPointer.target=null;airPointer.current=null;airPointer.intent=null;airPointer.gesture='idle';airPointer.filter.reset();airPointer.pointingAt=null;airPointer.reference=null;airPointer.handLocked=false;airPointer.handCrop=null;airPointer.handFailures=0;airPointer.pointAt=0;
   if(!enabled){airPointer.mustRelease=false;airPointer.releaseAt=null;}
   $('airPointerCursor').hidden=true;
   $('airPointerToggle').textContent=enabled?'Turn off air pointer':'Enable air pointer';
@@ -420,16 +427,20 @@ function finishPointerCalibration(state) {
   try { localStorage.setItem(scopedStorageKey(AIR_POINTER_KEY),JSON.stringify(config)); }
   catch { pointerToast('Could not save calibration in this browser.');cancelPointerCalibration();return; }
   airPointer.config=config;airPointer.calibration=null;$('pointerCalibration').hidden=true;setPointerEnabled(true);
-  airPointer.swipe=new PointerSwipeTracker(config.swipes);airPointer.mustRelease=true;airPointer.releaseAt=null;
+  airPointer.scroll=new PalmScrollController(config.swipes);airPointer.mustRelease=true;airPointer.releaseAt=null;
   $('airPointerCalibrate').disabled=false;
-  pointerStatus('Point to click. Open your hand and swipe up or down to scroll.');
+  pointerStatus('Point to click. Raise or lower your open palm to scroll; make a fist to stop.');
   pointerToast('Air pointer calibrated on this device.');
 }
 function pointerTargetAt(x,y) {
   const selector='button:not(:disabled),a[href],summary,select:not(:disabled),input:not([type="hidden"]):not(:disabled),textarea:not(:disabled),label[for],[role="button"],[role="tab"],[role="checkbox"],[role="switch"],[role="menuitem"],[role="link"],[role="option"]';
   const target=document.elementFromPoint(x,y)?.closest(selector);
-  if(!target||target.matches(':disabled,[aria-disabled="true"]')||target.closest('[hidden],[inert],[aria-hidden="true"]'))return null;
-  return target.getClientRects().length?target:null;
+  return pointerControlAvailable(target)?target:null;
+}
+function pointerControlAvailable(target) {
+  if(!target?.isConnected||target.matches(':disabled,[aria-disabled="true"]')||target.closest('[hidden],[inert],[aria-hidden="true"]'))return false;
+  const dialog=document.querySelector('dialog[open]');
+  return (!dialog||dialog.contains(target))&&target.getClientRects().length>0;
 }
 function processPointerHand(result,now) {
   const hand=result?.landmarks?.[0];
@@ -483,70 +494,104 @@ function processPointerHand(result,now) {
     }
     return;
   }
-  if(!airPointer.enabled)return;
+  if(!airPointer.enabled||airPointer.suspended)return;
   const pointing=hand&&isIndexPointing(hand);
   airPointer.canDwell=false;
+  if(!hand){
+    airPointer.gesture='missing';airPointer.releaseAt=null;airPointer.dwellUpdatedAt=null;stopPalmScroll();
+    pointerStatus('Hand not visible. Raise it into view; tracking pauses until you return.');return;
+  }
   if(!pointing){
-    airPointer.pointingAt=null;resetPointerDwell();
     // Lost tracking never counts as the deliberate release required after a click.
-    if(hand&&airPointer.mustRelease){if(airPointer.releaseAt===null)airPointer.releaseAt=now;if(now-airPointer.releaseAt>=450){airPointer.mustRelease=false;airPointer.releaseAt=null;}}
+    if(airPointer.mustRelease){if(airPointer.releaseAt===null)airPointer.releaseAt=now;if(now-airPointer.releaseAt>=450){airPointer.mustRelease=false;airPointer.releaseAt=null;}}
     else airPointer.releaseAt=null;
-    if(hand&&isOpenPalm(hand)){
-      const input=pointerInput(hand,airPointer.config.mode),stroke=airPointer.swipe.update(input?.palm,now);
-      if(stroke)scrollPointerSurface(stroke.direction);
-      else pointerStatus('Open palm · swipe up or down, then pause.');
-    }else{if(hand)airPointer.swipe.reset();else airPointer.swipe.update(null,now);pointerStatus(hand?'Point with your index finger to aim. Open palm to scroll.':'Hand not visible. Raise it into view; use even light.');}
+    if(isFist(hand)){
+      const fistAt=airPointer.gesture==='fist'?airPointer.fistAt:now;
+      stopPalmScroll();airPointer.gesture='fist';airPointer.fistAt=fistAt;airPointer.dwellUpdatedAt=null;
+      if(!airPointer.candidate||now-fistAt>=160){resetPointerDwell();airPointer.pointingAt=null;airPointer.target=null;}
+      pointerStatus('Stopped ✊ · point to click, or open your hand to scroll.');return;
+    }
+    if(isOpenPalm(hand)){
+      resetPointerDwell();airPointer.gesture='palm';airPointer.pointingAt=null;airPointer.target=null;
+      const input=pointerInput(hand,airPointer.config.mode);
+      airPointer.scroll.observe(input?.palm,now,Math.min(1600,innerHeight*1.8));
+      if(!input){stopPalmScroll();pointerStatus('Scrolling paused. Show both shoulders and your open hand.');return;}
+      const speed=airPointer.scroll.targetVelocity;
+      pointerStatus(!airPointer.scroll.armed?'Hold your open palm briefly to set its starting position.':Math.abs(speed)>1?`Scrolling ${speed<0?'up ↑':'down ↓'} · make a fist to stop.`:'Raise or lower your open palm to scroll. Make a fist to stop.');
+    }else{
+      stopPalmScroll();airPointer.gesture='uncertain';airPointer.dwellUpdatedAt=null;
+      pointerStatus('Point with your index finger to aim. Open your hand to scroll.');
+    }
     return;
   }
-  airPointer.swipe.reset();airPointer.releaseAt=null;
+  stopPalmScroll();airPointer.gesture='point';airPointer.releaseAt=null;
   const input=pointerInput(hand,airPointer.config.mode);
-  if(!input){resetPointerDwell();pointerStatus('Show both shoulders so distance tracking can resume.');return;}
+  if(!input){airPointer.dwellUpdatedAt=null;pointerStatus('Show both shoulders so distance tracking can resume.');return;}
   const mapped=mapFingerToScreen(airPointer.config.map,input.tip);if(!mapped)return;
   if(now-airPointer.pointAt>250){airPointer.filter.reset();airPointer.pointingAt=now;resetPointerDwell();}
   if(airPointer.pointingAt===null)airPointer.pointingAt=now;
-  airPointer.target=airPointer.filter.update(mapped,now);airPointer.pointAt=now;
+  airPointer.target=airPointer.filter.update(mapped,now,{width:innerWidth,height:innerHeight,precision:!!airPointer.candidate});
+  airPointer.intent=airPointer.filter.intent;airPointer.pointAt=now;
   airPointer.canDwell=now-airPointer.pointingAt>=220;
 }
-function scrollPointerSurface(direction) {
-  resetPointerDwell();airPointer.mustRelease=true;airPointer.releaseAt=null;
-  const amount=(direction==='up'?-1:1)*Math.min(192,Math.round(window.innerHeight*.28));
+function pointerScrollSurface(direction) {
   const dialog=document.querySelector('dialog[open]');
   let node=document.elementFromPoint((airPointer.current?.x??.5)*innerWidth,(airPointer.current?.y??.5)*innerHeight);
   while(node&&node!==document.body){
     const style=getComputedStyle(node),canScroll=/auto|scroll/.test(style.overflowY)&&node.scrollHeight>node.clientHeight+2;
-    if(canScroll&&(amount<0?node.scrollTop>0:node.scrollTop+node.clientHeight<node.scrollHeight-1))break;
+    if(canScroll&&(direction<0?node.scrollTop>0:node.scrollTop+node.clientHeight<node.scrollHeight-1))break;
     node=node.parentElement;
   }
-  const surface=node&&node!==document.body?node:dialog||document.scrollingElement;
-  surface?.scrollBy({top:amount,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
-  pointerStatus(`Scrolled ${direction}. Pause, then swipe again.`);pointerToast(`Scroll ${direction} ${direction==='up'?'↑':'↓'}`);
+  return node&&node!==document.body?node:dialog||document.scrollingElement;
+}
+function renderPalmScrollFrame(now) {
+  if(!airPointer.enabled||airPointer.suspended||airPointer.gesture!=='palm'){stopPalmScroll();return;}
+  const delta=airPointer.scroll.tick(now);if(!delta)return;
+  const surface=airPointer.scrollSurface||pointerScrollSurface(Math.sign(delta));
+  const dialog=document.querySelector('dialog[open]');
+  if(!surface?.isConnected||(dialog&&surface!==dialog&&!dialog.contains(surface))){stopPalmScroll();return;}
+  airPointer.scrollSurface=surface;
+  // Direct frame-sized steps have no browser animation that could drift after a fist.
+  surface.scrollBy({top:delta,behavior:'instant'});
 }
 function renderPointerFrame(now) {
   renderSwipeCalibrationFrame(now);
+  renderPalmScrollFrame(now);
   const cursor=$('airPointerCursor');
-  if(!airPointer.enabled||!airPointer.target||now-airPointer.pointAt>240){cursor.hidden=true;resetPointerDwell();airPointer.renderAt=now;return;}
+  if(!airPointer.enabled||airPointer.suspended||!airPointer.target||now-airPointer.pointAt>240){cursor.hidden=true;resetPointerDwell();airPointer.renderAt=now;return;}
   const dt=Math.min(80,now-(airPointer.renderAt||now));airPointer.renderAt=now;
   const current=airPointer.current||airPointer.target,alpha=1-Math.exp(-dt/40);
   airPointer.current={x:current.x+(airPointer.target.x-current.x)*alpha,y:current.y+(airPointer.target.y-current.y)*alpha};
-  const x=Math.min(innerWidth-1,Math.max(1,airPointer.current.x*innerWidth)),y=Math.min(innerHeight-1,Math.max(1,airPointer.current.y*innerHeight));
+  let x=Math.min(innerWidth-1,Math.max(1,airPointer.current.x*innerWidth)),y=Math.min(innerHeight-1,Math.max(1,airPointer.current.y*innerHeight));
   const openDialog=document.querySelector('dialog[open]'),cursorLayer=openDialog||document.body;
   if(cursor.parentElement!==cursorLayer)cursorLayer.append(cursor);
-  cursor.hidden=false;cursor.style.transform=`translate3d(${x}px,${y}px,0) translate(-50%,-50%)`;
-  if(!airPointer.canDwell){resetPointerDwell();return;}
-  if(airPointer.mustRelease){airPointer.releaseAt=null;pointerStatus('Release your pointing finger to arm another action.');return;}
-  let target=pointerTargetAt(x,y);
-  const previous=airPointer.candidate;
-  if(!target&&previous?.isConnected&&!previous.matches(':disabled,[aria-disabled="true"]')&&!previous.closest('[hidden],[inert]')&&previous.getClientRects().length){
-    const box=previous.getBoundingClientRect();
-    if(x>=box.left-8&&x<=box.right+8&&y>=box.top-8&&y<=box.bottom+8)target=previous;
+  cursor.hidden=false;
+  const intent={x:(airPointer.intent?.x??airPointer.current.x)*innerWidth,y:(airPointer.intent?.y??airPointer.current.y)*innerHeight};
+  let target=airPointer.candidate;
+  if(target&&(!pointerControlAvailable(target)||!airPointer.latch.update(intent,target.getBoundingClientRect(),now))){
+    resetPointerDwell();airPointer.filter.reset();airPointer.target={...airPointer.intent};airPointer.current={...airPointer.intent};
+    cursor.style.transform=`translate3d(${intent.x}px,${intent.y}px,0) translate(-50%,-50%)`;return;
   }
+  if(!target&&airPointer.canDwell&&!airPointer.mustRelease){
+    target=pointerTargetAt(x,y);
+    if(target){
+      airPointer.candidate=target;airPointer.latch.acquire(intent);airPointer.dwellUpdatedAt=now;target.classList.add('air-hover-target');
+      const box=target.getBoundingClientRect();
+      airPointer.latchOffset={x:box.width>24?Math.max(12,Math.min(box.width-12,x-box.left))/box.width:.5,y:box.height>24?Math.max(12,Math.min(box.height-12,y-box.top))/box.height:.5};
+    }
+  }
+  if(target){const box=target.getBoundingClientRect();x=box.left+box.width*airPointer.latchOffset.x;y=box.top+box.height*airPointer.latchOffset.y;}
+  cursor.style.transform=`translate3d(${x}px,${y}px,0) translate(-50%,-50%)`;
+  cursor.classList.toggle('is-latched',!!target);cursor.classList.toggle('is-paused',!airPointer.canDwell);
+  if(!airPointer.canDwell||now-airPointer.pointAt>160){airPointer.dwellUpdatedAt=null;return;}
+  if(airPointer.mustRelease){airPointer.releaseAt=null;pointerStatus('Relax your finger briefly before the next click.');return;}
   if(!target){resetPointerDwell();pointerStatus('Point at a visible button, tab, or control and hold.');return;}
-  if(airPointer.candidate!==target){resetPointerDwell();airPointer.candidate=target;airPointer.dwellAt=now;target.classList.add('air-hover-target');}
   const label=(target.getAttribute('aria-label')||target.innerText||target.textContent||target.title||'Control').replace(/\s+/g,' ').trim().slice(0,48);
-  const duration=target.id==='stageStop'||/delete|clear|remove|sign out|log out|finish/i.test(label)?2200:target.id==='startBtn'?1600:target.id==='capturePhoto'?1400:1300;
-  const progress=Math.min(1,(now-airPointer.dwellAt)/duration);
+  const duration=target.id==='stageStop'||/delete|clear|remove|sign out|log out|finish/i.test(label)?1100:target.id==='startBtn'?800:target.id==='capturePhoto'?700:650;
+  airPointer.dwellElapsed+=Math.max(0,Math.min(60,now-(airPointer.dwellUpdatedAt??now)));airPointer.dwellUpdatedAt=now;
+  const progress=Math.min(1,airPointer.dwellElapsed/duration);
   cursor.style.setProperty('--dwell',`${progress*100}%`);
-  pointerStatus(`${label||'Control'} · hold ${Math.max(0,Math.ceil((duration-(now-airPointer.dwellAt))/1000))}s`);
+  pointerStatus(`${label||'Control'} · latched · hold ${Math.max(0,(duration-airPointer.dwellElapsed)/1000).toFixed(1)}s`);
   if(progress>=1){target.click();airPointer.mustRelease=true;airPointer.releaseAt=null;resetPointerDwell();pointerStatus('Action activated. Release your index finger to use the pointer again.');pointerToast(`${label||'Control'} activated.`);}
 }
 async function toggleAirPointer() {
@@ -559,7 +604,7 @@ async function toggleAirPointer() {
     if(!app.stream){pointerStatus('Camera was turned off. Enable it before using the air pointer.');return;}
     $('airPointerCalibrate').disabled=false;
     const config=readPointerCalibration();
-    if(config){airPointer.config=config;setPointerEnabled(true);airPointer.swipe=new PointerSwipeTracker(config.swipes);airPointer.mustRelease=true;airPointer.releaseAt=null;pointerStatus('Relax your pointing finger briefly. Point to click; open palm to scroll.');}
+    if(config){airPointer.config=config;setPointerEnabled(true);airPointer.scroll=new PalmScrollController(config.swipes);airPointer.mustRelease=true;airPointer.releaseAt=null;pointerStatus('Relax your finger briefly. Point to click; move an open palm to scroll; make a fist to stop.');}
     else showPointerCalibration();
   } catch(error){pointerStatus(`Air pointer could not start: ${error.message||'check the camera and try again.'}`);setPointerEnabled(false);}
   finally{$('airPointerToggle').disabled=false;}
@@ -569,6 +614,10 @@ $('airPointerCalibrate').addEventListener('click',()=>{if(handLandmarker&&app.st
 $('pointerCalibrationCancel').addEventListener('click',cancelPointerCalibration);
 $('pointerCalibrationRetry').addEventListener('click',showPointerCalibration);
 window.addEventListener('keydown',event=>{if(event.key==='Escape'){if(airPointer.calibration)cancelPointerCalibration();else if(airPointer.enabled){setPointerEnabled(false);pointerStatus('Air pointer off.');}}});
+window.addEventListener('blur',()=>{airPointer.suspended=true;stopPalmScroll();resetPointerDwell();airPointer.canDwell=false;});
+window.addEventListener('focus',()=>{airPointer.suspended=document.hidden;airPointer.pointingAt=null;});
+document.addEventListener('visibilitychange',()=>{airPointer.suspended=document.hidden;if(document.hidden){stopPalmScroll();resetPointerDwell();airPointer.canDwell=false;}});
+document.addEventListener('scroll',()=>{if(airPointer.candidate)resetPointerDwell();},true);
 
 async function enumerateCameras() {
   if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -771,7 +820,7 @@ function monitor() {
   if(handLandmarker&&pointerActive&&frameAt-airPointer.lastDetectionAt>=80){
     airPointer.lastDetectionAt=frameAt;
     try{processPointerHand(detectPointerHand(),performance.now());}
-    catch(error){airPointer.canDwell=false;resetPointerDwell();pointerStatus('Hand tracking paused. Hold your hand in view to retry.');console.warn('Hand estimate skipped',error);}
+    catch(error){airPointer.canDwell=false;airPointer.gesture='missing';stopPalmScroll();resetPointerDwell();pointerStatus('Hand tracking paused. Hold your hand in view to retry.');console.warn('Hand estimate skipped',error);}
   }
   app.raf = requestAnimationFrame(monitor);
 }
@@ -1347,6 +1396,7 @@ function buildAppScreens() {
   let activeScreen = 'home';
   const switchTo = (key) => {
     if (!byName[key]) return;
+    stopPalmScroll();resetPointerDwell();
     if (activeScreen === 'move' && key !== 'move' && app.running) { toast('Finish the active session before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.autoCalibration.active) { toast('Finish calibration before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.countdownActive) cancelCountdown();
