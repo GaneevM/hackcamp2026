@@ -106,6 +106,7 @@ function syncCameraControl() {
   button.setAttribute('aria-pressed', String(enabled));
   button.disabled = app.cameraAcquiring || app.running || app.countdownActive || app.autoCalibration.active;
   button.title = app.cameraAcquiring ? 'Waiting for camera access…' : button.disabled ? 'Finish the session or calibration before turning the camera off.' : '';
+  syncHandActionMenu();
 }
 
 function setRating(groupId, valueKey, valueId, format) {
@@ -282,9 +283,7 @@ function handStatus(message,progress=null) {
   $('handControlsStatus').textContent=message;
   const hud=$('handControlsHud'),label=$('handControlsHudText'),bar=$('handCommandProgress');
   if(label.textContent!==message)label.textContent=message;
-  bar.hidden=progress===null;bar.value=progress??0;hud.hidden=!handControls.enabled;
-  const layer=document.querySelector('dialog[open]')||document.body;
-  if(hud.parentElement!==layer)layer.append(hud);
+  bar.hidden=progress===null;bar.value=progress??0;hud.hidden=false;
   syncHandActionMenu();
 }
 function stopPalmScroll(){handControls.scroll.stop();handControls.surface=null;}
@@ -293,7 +292,7 @@ function isPracticeScreen(){return $('screen-move')?.classList.contains('screen-
 function cameraIsOn(){return Boolean(app.stream?.getVideoTracks().some(track=>track.readyState==='live'));}
 function syncHandActionMenu(){
   const menu=$('handActionMenu');if(!menu)return;
-  menu.hidden=!(handControls.enabled&&isPracticeScreen());
+  menu.hidden=false;
   $('handActionCameraValue').textContent=cameraIsOn()?'ON · turn off':'OFF · turn on';
   $('handActionSessionValue').textContent=app.running?'RUNNING · stop':app.countdownActive?'STARTING · cancel':'READY · start';
   $('handActionVoiceValue').textContent=$('practiceVoice').getAttribute('aria-pressed')==='true'?'ON · mute':'OFF · enable';
@@ -314,6 +313,7 @@ function navigateHandActionList(point,now,range){
     const direction=delta>0?1:-1;
     handControls.menuSelection=Math.max(0,Math.min(3,handControls.menuSelection+direction*steps));
     handControls.menuAnchorY+=direction*step*steps;
+    $('handActionMenu').querySelectorAll('[data-hand-action]')[handControls.menuSelection]?.scrollIntoView({block:'nearest',behavior:'instant'});
   }
   handControls.menuLastAt=now;
   const selected=Object.keys(handActionNames)[handControls.menuSelection];
@@ -326,7 +326,7 @@ function setHandControlsEnabled(enabled) {
   $('handControlsToggle').textContent=enabled?'Hand controls on':'Enable hand controls';
   $('handControlsToggle').setAttribute('aria-pressed',String(enabled));
   if($('profileHandControlStatus'))$('profileHandControlStatus').textContent=enabled?'Hand controls are on. Open palm scrolls; on Practice it moves through the action list.':'Hand controls are off.';
-  $('handControlsLegend').hidden=!enabled;$('handControlsHud').hidden=!enabled;
+  $('handControlsLegend').hidden=!enabled;$('handControlsHud').hidden=false;
   if(!enabled)handStatus('Hand controls off. Enable them to use finger gestures.');
   else syncHandActionMenu();
 }
@@ -350,10 +350,10 @@ function cancelGesturePhoto(message='Photo countdown cancelled.'){
 }
 function scheduleGesturePhoto(){
   if(handControls.photoTimer){cancelGesturePhoto('Photo countdown cancelled.');return;}
-  if(!app.running||app.manual||$('video').readyState<2||!app.activeSessionId){handStatus('Start a camera session before choosing Capture photo.');return;}
+  if(!cameraIsOn()||$('video').readyState<2){handStatus('Turn the camera on before choosing Capture photo.');return;}
   handControls.photoDeadline=Date.now()+5000;handControls.photoAnnounced=0;
   const tick=()=>{
-    if(!app.running||app.manual||$('video').readyState<2||!app.activeSessionId){cancelGesturePhoto('Photo countdown stopped because the session is no longer active.');return;}
+    if(!cameraIsOn()||$('video').readyState<2){cancelGesturePhoto('Photo countdown stopped because the camera is off.');return;}
     const left=Math.max(0,Math.ceil((handControls.photoDeadline-Date.now())/1000));
     if(left===0){clearInterval(handControls.photoTimer);handControls.photoTimer=null;handControls.photoDeadline=0;handControls.photoAnnounced=0;syncHandActionMenu();void captureSessionPhoto();return;}
     if(left!==handControls.photoAnnounced){handControls.photoAnnounced=left;handStatus(`Photo in ${left}… hold your position. Select Capture photo again to cancel.`);}
@@ -549,7 +549,7 @@ function updateHandCameraStatus(now){
  const ready=now-(handControls.seenAt??-1000)<300;
  app.poseReady=false;app.currentAngle=null;app.angleSamples=[];$('angleLive').textContent='Hand controls';
  $('trackingTitle').textContent=ready?'Hand controls ready':'Show your hand to the camera';
- $('trackingCopy').textContent='1 index finger: camera view. 2 fingers: session. Exercise framing is checked when the session starts.';
+ $('trackingCopy').textContent='Open palm: move through the options below. Fist: stop. Hold one finger: select.';
  $('startBtn').disabled=!app.stream||!app.landmarker;
  cameraState(ready?'Hand controls ready':'Waiting for hand',ready?'good':'neutral','Webcam on · hand controls enabled',ready?'21 hand points':'Show one hand');
 }
@@ -1215,7 +1215,8 @@ function buildAppScreens() {
   const homePhotos = document.createElement('section'); homePhotos.className = 'home-photos'; homePhotos.id = 'homePhotosMount';
   const homeLinks = document.createElement('div'); homeLinks.className = 'home-links';
   homeLinks.innerHTML = '<button class="home-link" type="button" data-open-screen="checkin"><span>How did today feel?</span><span aria-hidden="true">→</span></button><button class="home-link" type="button" data-open-screen="progress"><span>View your progress</span><span aria-hidden="true">→</span></button>';
-  byName.home.append(welcome, homeFocus, homeGoalRow, homeDashboard, homePhotos, homeLinks);
+  const opening=document.createElement('div');opening.className='home-opening';opening.append(homeFocus,homeGoalRow);
+  byName.home.append(welcome, opening, homeDashboard, homePhotos, homeLinks);
   homeDashboard.querySelector('.home-plan-notice-slot').append(notice);
 
   const practiceLayout = document.createElement('div'); practiceLayout.className = 'practice-layout';
@@ -1223,6 +1224,10 @@ function buildAppScreens() {
   practiceLayout.append(movement, practiceAside); practiceAside.append(stats, calibration); byName.move.append(practiceLayout);
   const capture = document.createElement('button'); capture.type = 'button'; capture.className = 'secondary'; capture.id = 'capturePhoto'; capture.textContent = 'Capture photo'; capture.disabled = true; capture.title = 'Start a camera session to capture a photo.';
   $('cameraRequirement').before(capture);
+  $('trackingStatus').after($('handControlsHud'));
+  $('handControlsHud').hidden=false;$('handActionMenu').hidden=false;
+  const photos=document.createElement('details');photos.className='practice-photos';photos.innerHTML='<summary>Photos on this device</summary><div id="practicePhotoGallery" class="photo-gallery"></div>';
+  $('handControlsHud').append(photos);
   const checkinLayout = document.createElement('div'); checkinLayout.className = 'checkin-layout';
   checkinLayout.append(checkin, reflection); byName.checkin.append(checkinLayout);
 
@@ -1352,7 +1357,7 @@ async function mediaAll(store) {
   const db = await mediaDb(); return new Promise((resolve, reject) => { const request = db.transaction(store).objectStore(store).getAll(); request.onsuccess = () => { db.close(); const prefix = `${activeDataScope}:`; const rows = request.result || []; resolve(rows.filter((item) => item.id?.startsWith(prefix) || (activeDataScope === 'guest' && !String(item.id).includes(':')))); }; request.onerror = () => { db.close(); reject(request.error); }; });
 }
 async function mediaPut(store, value) {
-  const db = await mediaDb(); const scopedValue = { ...value, id: `${activeDataScope}:${value.id}` }; return new Promise((resolve, reject) => { const request = db.transaction(store, 'readwrite').objectStore(store).put(scopedValue); request.onsuccess = () => { db.close(); resolve(); }; request.onerror = () => { db.close(); reject(request.error); }; });
+  const scope=activeDataScope;const db = await mediaDb(); const scopedValue = { ...value, id: `${scope}:${value.id}` }; return new Promise((resolve, reject) => { const transaction=db.transaction(store,'readwrite');transaction.objectStore(store).put(scopedValue);transaction.oncomplete=()=>{db.close();resolve();};transaction.onabort=transaction.onerror=()=>{db.close();reject(transaction.error||new Error('Local storage write failed.'));}; });
 }
 async function mediaDelete(store, id) {
   const db = await mediaDb(); return new Promise((resolve, reject) => { const request = db.transaction(store, 'readwrite').objectStore(store).delete(id); request.onsuccess = () => { db.close(); resolve(); }; request.onerror = () => { db.close(); reject(request.error); }; });
@@ -1364,10 +1369,11 @@ async function renderMedia() {
   try {
     const [photos, docs] = await Promise.all([mediaAll('photos'), mediaAll('documents')]);
     const gallery = $('photoGallery');
-    gallery.innerHTML = photos.length ? photos.sort((a,b) => b.date.localeCompare(a.date)).map((photo) => { const url=URL.createObjectURL(photo.blob); mediaUrls.add(url); return `<article class="photo-item"><a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="Session photo from ${escapeHtml(new Date(photo.date).toLocaleDateString())}"></a><div><b>${escapeHtml(photo.exercise)}</b><small>${escapeHtml(new Date(photo.date).toLocaleString())}</small><button class="text-action" data-delete-photo="${escapeHtml(photo.id)}">Delete</button></div></article>`; }).join('') : '<div class="media-empty">No session photos yet. Capture one during a camera session.</div>';
+    gallery.innerHTML = photos.length ? photos.sort((a,b) => b.date.localeCompare(a.date)).map((photo) => { const url=URL.createObjectURL(photo.blob); mediaUrls.add(url); return `<article class="photo-item"><a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="Session photo from ${escapeHtml(new Date(photo.date).toLocaleDateString())}"></a><div><b>${escapeHtml(photo.exercise)}</b><small>${escapeHtml(new Date(photo.date).toLocaleString())}</small><button class="text-action" data-delete-photo="${escapeHtml(photo.id)}">Delete</button></div></article>`; }).join('') : '<div class="media-empty">No photos yet. Turn on the camera and select Capture photo.</div>';
+    const practiceGallery=$('practicePhotoGallery');if(practiceGallery)practiceGallery.innerHTML=gallery.innerHTML;
     const list = $('documentList');
     list.innerHTML = docs.length ? docs.sort((a,b) => b.date.localeCompare(a.date)).map((doc) => { const url=URL.createObjectURL(doc.blob); mediaUrls.add(url); return `<div class="document-item"><a href="${url}" target="_blank" rel="noopener">${escapeHtml(doc.name)}</a><small>${escapeHtml(new Date(doc.date).toLocaleDateString())}</small>${doc.extractedText ? `<button class="text-action" data-apply-document="${escapeHtml(doc.id)}">Fill fields</button>` : ''}<button class="text-action" data-delete-document="${escapeHtml(doc.id)}">Remove</button></div>`; }).join('') : '<div class="media-empty">No diagnosis paper added.</div>';
-    gallery.querySelectorAll('[data-delete-photo]').forEach((button) => button.onclick = async () => { await mediaDelete('photos', button.dataset.deletePhoto); renderMedia(); });
+    document.querySelectorAll('[data-delete-photo]').forEach((button) => button.onclick = async () => { await mediaDelete('photos', button.dataset.deletePhoto); renderMedia(); });
     list.querySelectorAll('[data-delete-document]').forEach((button) => button.onclick = async () => { await mediaDelete('documents', button.dataset.deleteDocument); renderMedia(); });
     list.querySelectorAll('[data-apply-document]').forEach((button) => button.onclick = async () => { const doc=docs.find((item)=>item.id===button.dataset.applyDocument); if (doc) applyExtractedText(doc.extractedText); });
   } catch (error) { console.warn('Local media storage unavailable', error); toast('Could not open local photo storage.'); }
@@ -1495,12 +1501,12 @@ $('diagnosisFile').onchange = async (event) => {
   event.target.value='';
 };
 async function captureSessionPhoto(){
-  const video = $('video'); if (!app.running || app.manual || video.readyState < 2 || !app.activeSessionId) { toast('Start a camera session before taking a photo.'); return; }
+  const video = $('video'); if (!cameraIsOn() || video.readyState < 2 || !video.videoWidth) { toast('Turn the camera on before taking a photo.'); return; }
   const canvas = document.createElement('canvas'); canvas.width = video.videoWidth; canvas.height = video.videoHeight; canvas.getContext('2d').drawImage(video, 0, 0);
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', .86)); if (!blob) { toast('Could not capture this frame.'); return; }
-  try { await mediaPut('photos', { id: crypto.randomUUID?.() || String(Date.now()), sessionId: app.activeSessionId, exercise: activeMovement().title, date: new Date().toISOString(), blob }); await renderMedia(); toast('Session photo saved on this device.'); } catch { toast('Could not save the photo on this device.'); }
+  try { await mediaPut('photos', { id: crypto.randomUUID?.() || String(Date.now()), sessionId: app.activeSessionId || null, exercise: activeMovement().title, date: new Date().toISOString(), blob }); await renderMedia(); document.querySelector('.practice-photos').open=true;handStatus('Photo saved on this device.');toast('Photo saved on this device.'); } catch { toast('Could not save the photo on this device. Check browser storage permissions.'); }
 }
-$('capturePhoto').onclick = () => void captureSessionPhoto();
+$('capturePhoto').onclick = scheduleGesturePhoto;
 renderPlan(); renderMedia();
 window.addEventListener('beforeunload', clearMediaUrls);
 

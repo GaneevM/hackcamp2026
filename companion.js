@@ -8,7 +8,7 @@ export function createCompanion(options) {
   panel.style.marginTop = '16px';
   panel.innerHTML = `
     <div class="companion-heading">
-      <div class="companion-name"><span class="voice-symbol" aria-hidden="true">◖◗</span><div><h2>Voice controls</h2><p>Choose how often you hear spoken exercise cues.</p></div></div>
+      <div class="companion-name"><span class="voice-symbol" aria-hidden="true">✦</span><div><h2>Gemini</h2><p>Voice cues and your session review.</p></div></div>
       <label class="voice-toggle"><input type="checkbox" data-id="enabled" checked><span data-id="voiceLabel">Voice on</span></label>
     </div>
     <div class="companion-toolbar">
