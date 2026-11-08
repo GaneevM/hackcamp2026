@@ -25,5 +25,3 @@ Before deploying, run the build and relevant existing tests. Then test on the ac
 GitHub Actions must deploy with wrangler.connected.jsonc and --keep-vars, after installing server dependencies. The root wrangler.jsonc publishes only static assets. The release smoke check now requires a JSON /health response with the D1 backend and Gemini secret configured.
 
 Hand navigation is disabled when an exercise starts. Sit-to-stand requires the selected hip, knee, and ankle, with a planted-foot anchor; the head and shoulders need not fit in the frame. Up to 250 ms of missing tracking pauses a cycle without counting unseen motion; longer gaps discard the incomplete cycle.
-
-Live coaching is instructed to speak English throughout the session and to keep the selected exercise authoritative. Push-up variations are sent and included only for push-ups; legacy variation fields on other movements are ignored. Elbow-bend guidance explicitly describes a comfortable seated or standing curl and does not require floor work. Language and coaching quality still need a live-session check; instructions reduce model drift but do not guarantee every generated response.
