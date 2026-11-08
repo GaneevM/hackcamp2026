@@ -49,12 +49,14 @@ jobs:
           AUTH0_DOMAIN: ${{ vars.AUTH0_DOMAIN }}
           AUTH0_CLIENT_ID: ${{ vars.AUTH0_CLIENT_ID }}
         run: node scripts/build.mjs
-      - name: Deploy static frontend
+      - name: Install backend dependencies
+        run: npm ci --prefix server
+      - name: Deploy frontend and API Worker
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --name physipeak
+          command: deploy --config wrangler.connected.jsonc --keep-vars
       - name: Verify live assets and authentication configuration
         run: node scripts/smoke.mjs
       - name: Deployment status

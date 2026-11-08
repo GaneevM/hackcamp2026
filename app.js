@@ -74,6 +74,8 @@ const saveSessions = (rows) => localStorage.setItem(scopedStorageKey(SESSION_KEY
 const readCalibrations = () => { try { return JSON.parse(localStorage.getItem(scopedStorageKey(CALIBRATION_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(CALIBRATION_KEY) : null) ?? '{}'); } catch { return {}; } };
 const saveCalibrations = (values) => localStorage.setItem(scopedStorageKey(CALIBRATION_KEY), JSON.stringify(values));
 const activeMovement = () => movements[$('exerciseSelect').value] || movements.sit;
+// Retained for session metadata and older saved push-up records.
+const pushupVariant = () => $('pushupVariant')?.value || 'floor';
 const calibrationKey = (movement = $('exerciseSelect').value, side = $('bodySide').value) => `${movement}:${side}`;
 const getCalibration = (movement, side) => readCalibrations()[calibrationKey(movement, side)];
 
