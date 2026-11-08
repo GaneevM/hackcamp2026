@@ -33,7 +33,7 @@ export function createCompanion(options) {
       <p class="followup-question" data-id="question"></p>
       <button type="button" class="quiet" data-id="read">Listen to question</button>
       <label>Your note <span>Optional</span><textarea data-id="answer" maxlength="2000" rows="3" placeholder="Anything you’d like your physio to know?"></textarea></label>
-      <div class="companion-actions"><button type="button" class="primary" data-id="save">Save note</button><button type="button" class="secondary" data-id="report">View session summary</button></div>
+      <div class="companion-actions"><button type="button" class="primary" data-id="save">Save note</button><button type="button" class="secondary" data-id="report">Review session &amp; AI options</button></div>
       <p class="companion-technical" data-id="kind"></p>
       <pre class="companion-summary" data-id="summary" hidden></pre>
     </div>
@@ -197,7 +197,7 @@ export function createCompanion(options) {
     el('answer').value = value.answer || '';
     el('answer').disabled = value.kind === 'synthetic' && value.answer !== null;
     el('save').disabled = el('answer').disabled;
-    el('report').textContent = value.kind === 'synthetic' ? 'Generate fictional Gemini report' : 'View session summary';
+    el('report').textContent = value.kind === 'synthetic' ? 'Generate fictional Gemini report' : 'Review session & AI options';
   }
   el('read').onclick = async () => {
     if (!current || busy) return;
@@ -232,7 +232,9 @@ export function createCompanion(options) {
   };
   el('report').onclick = async () => {
     if (!current || busy) return;
-    const selected = current, version = viewVersion; busy = true;
+    const selected = current, version = viewVersion;
+    if (selected.kind !== 'synthetic' && options.openVisit) { options.openVisit(selected.session.id); return; }
+    busy = true;
     status(selected.kind === 'synthetic' ? 'Generating a report from fictional data…' : 'Reading local summary…');
     try {
       const report = selected.kind === 'synthetic'
@@ -343,7 +345,8 @@ export function createCompanion(options) {
         const saved = await request('/api/journal/sessions', { scope, session, metrics });
         if (scope !== options.getScope() || version !== viewVersion) return;
         present({ ...saved, kind: 'local', question: localQuestion(session, metrics), answer: null });
-        status('Session saved to local SQLite. No camera data sent to Gemini.');
+        options.onSaved?.();
+        status('Session saved locally. Review selected statistics in Visit note before sharing with Gemini.');
         if (el('enabled').checked && el('mode').value !== 'quiet' && voiceVersion === endVoiceVersion) {
           pendingQuestion = { text: current.question, view: viewVersion, voice: voiceVersion };
           flushQuestion();
