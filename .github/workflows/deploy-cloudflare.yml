@@ -6,13 +6,14 @@ on:
       - main
     paths:
       - "index.html"
+      - "styles.css"
+      - "redesign.css"
       - "app.js"
       - "companion.js"
       - "session-metrics.js"
       - "auth0-config.js"
       - "_headers"
       - "wrangler.jsonc"
-      - ".github/workflows/deploy-cloudflare.yml"
   workflow_dispatch:
 
 permissions:
@@ -50,7 +51,7 @@ jobs:
           fs.writeFileSync('auth0-config.js', contents);
           fs.rmSync('dist', { recursive: true, force: true });
           fs.mkdirSync('dist', { recursive: true });
-          for (const file of ['index.html', 'app.js', 'companion.js', 'session-metrics.js', 'auth0-config.js', '_headers']) {
+          for (const file of ['index.html', 'styles.css', 'redesign.css', 'app.js', 'companion.js', 'session-metrics.js', 'auth0-config.js', '_headers']) {
             fs.copyFileSync(file, `dist/${file}`);
           }
           fs.appendFileSync(process.env.GITHUB_OUTPUT, 'ready=true\n');

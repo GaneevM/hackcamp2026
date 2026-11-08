@@ -3,10 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#f5f6f2" />
+  <meta name="theme-color" content="#f3f6f2" />
   <title>Formnote — your movement, remembered</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
     :root{--ink:#1b302c;--muted:#718079;--line:#e6eae5;--bg:#f5f6f2;--paper:#fff;--green:#256653;--green2:#37866b;--mint:#e8f3ed;--mint2:#d4e9dc;--amber:#a87625;--amberbg:#fcf4e7;--red:#a94d43;--redbg:#fff1ee;--shadow:0 10px 35px rgba(28,49,42,.045)}
     *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font-family:'DM Sans',sans-serif;font-size:14px;line-height:1.45}button,input,select,textarea{font:inherit}button{cursor:pointer}button:focus-visible,a:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid #76ad94;outline-offset:2px}.app{min-height:100vh;display:grid;grid-template-columns:250px minmax(0,1fr)}
     .sidebar{position:sticky;top:0;height:100vh;background:#fff;border-right:1px solid var(--line);padding:25px 17px 18px;display:flex;flex-direction:column;z-index:5}.brand{display:flex;align-items:center;gap:10px;margin:0 9px 34px;text-decoration:none;color:var(--ink)}.brand-mark{height:34px;width:34px;background:var(--green);color:white;border-radius:11px;display:grid;place-items:center;font:800 20px Manrope}.brand-name{font:800 20px Manrope;letter-spacing:-.9px}.nav-caption{margin:0 10px 9px;color:#9aa49e;text-transform:uppercase;font-size:10px;font-weight:700;letter-spacing:1.1px}.nav{display:grid;gap:4px}.nav button{border:0;background:transparent;color:#65736d;text-align:left;display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:9px;font-weight:600}.nav button:hover{background:#f6f8f5}.nav button.active{background:var(--mint);color:var(--green)}.nav-ico{font-size:16px;width:18px;text-align:center}.sidebar-bottom{margin-top:auto}.privacy-mini{padding:13px;border:1px solid var(--line);border-radius:12px;color:var(--muted);font-size:11px;line-height:1.55}.privacy-mini strong{display:block;color:var(--ink);font-size:12px;margin:0 0 3px}.user-mini{display:flex;align-items:center;gap:10px;padding:18px 8px 3px}.avatar{width:34px;height:34px;display:grid;place-items:center;border-radius:50%;background:#e4efe8;color:var(--green);font-weight:700}.user-name{font-weight:700;font-size:12px}.user-plan{font-size:10px;color:var(--muted)}
@@ -30,7 +29,90 @@
     .scan-status{margin-top:10px;color:var(--green);font-size:11px}.scan-review{margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:10px}.scan-review summary{cursor:pointer;color:var(--green);font-size:11px;font-weight:700}.scan-review textarea{display:block;width:100%;min-height:150px;margin:9px 0;padding:10px;border:1px solid var(--line);border-radius:8px;color:var(--ink);font:11px/1.5 'DM Sans',sans-serif;resize:vertical}.scan-review button{font-size:11px}
     .calibration-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}.calibration-actions button{font-size:10px;padding:9px 11px}.auto-pose-card{display:flex;align-items:center;gap:15px;margin:14px 0;padding:15px;border:1px solid var(--line);border-radius:12px;background:#f8faf7}.auto-pose-illustration{width:84px;height:84px;flex:0 0 84px;display:grid;place-items:center;background:var(--mint);border-radius:12px;color:var(--green)}.auto-pose-illustration svg{width:70px;height:70px;fill:none;stroke:currentColor;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.auto-pose-illustration .pose-arc{stroke:#c08e38;stroke-dasharray:3 4}.step-label{color:var(--green);font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}.auto-pose-card h3{margin:4px 0;font:700 14px Manrope}.auto-pose-card p{margin:0;color:var(--muted);font-size:11px}.auto-cal-status{min-height:36px;padding:10px 12px;border-radius:9px;background:#f2f7f3;color:var(--green);font-size:11px}.calibration-actions #startAutoCalibration{white-space:nowrap}
     @media(max-width:650px){.calibration-actions{max-width:165px}.auto-pose-card{align-items:flex-start;padding:11px}.auto-pose-illustration{width:62px;height:62px;flex-basis:62px}.auto-pose-illustration svg{width:55px;height:55px}}
+    /* Formnote design system: native type, clear wayfinding, quiet surfaces, direct feedback. */
+    :root{color-scheme:light;--font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--ink:#172d28;--muted:#586c63;--line:#dfe8e2;--bg:#f3f6f2;--paper:#fff;--green:#246b57;--green2:#347d66;--mint:#eaf4ed;--mint2:#d8eadf;--shadow:0 2px 5px rgba(21,49,37,.035),0 12px 32px rgba(21,49,37,.045);font-synthesis:none;text-size-adjust:100%;-webkit-text-size-adjust:100%}
+    body{font-family:var(--font-ui);font-size:1rem;line-height:1.5;background:radial-gradient(ellipse at 82% 0%,rgba(223,239,227,.62),transparent 36rem),var(--bg)}
+    .brand-name,.welcome h1,.screen-heading h1,.card-title,.section-head h2,.home-focus h2,.panel-top h2,.stat-value,.auth-gate-card h1,.dialog-head h2,.recent-header h2,.auto-pose-card h3{font-family:var(--font-ui);font-optical-sizing:auto;letter-spacing:-.035em}
+    .app{grid-template-columns:244px minmax(0,1fr)}
+    .sidebar{background:rgba(255,255,255,.86);backdrop-filter:blur(22px) saturate(160%);-webkit-backdrop-filter:blur(22px) saturate(160%);border-color:rgba(218,229,221,.82);padding:25px 15px 18px}
+    .brand-mark{border-radius:12px;box-shadow:0 4px 12px rgba(36,107,87,.16)}
+    .brand-name{font-size:20px;letter-spacing:-.06em}
+    .brand-name,.nav-label{display:inline}
+    .nav-caption{letter-spacing:.09em;color:#687b72}
+    .nav button{position:relative;min-height:46px;border-radius:13px;padding:10px 12px;transition:background-color .16s ease,color .16s ease}
+    .nav button.active{background:#eaf4ed;color:#1d644f}
+    .nav button.active:before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:0 3px 3px 0;background:var(--green)}
+    .nav button:active,.mobile-nav button:active,.shortcut-card:active{transform:scale(.985)}
+    .topbar{position:sticky;top:0;z-index:6;height:64px;background:rgba(248,250,247,.78);backdrop-filter:blur(22px) saturate(175%);-webkit-backdrop-filter:blur(22px) saturate(175%);border-bottom:1px solid rgba(215,226,218,.7);box-shadow:0 5px 18px rgba(24,48,37,.025)}
+    .content{max-width:1320px;padding-top:34px;padding-bottom:48px}
+    .welcome{margin-bottom:24px}
+    .eyebrow{letter-spacing:.1em;color:#286c57}
+    .welcome h1,.screen-heading h1{font-size:clamp(1.8rem,3.1vw,2.35rem);line-height:1.12;letter-spacing:-.045em}
+    .welcome p,.screen-heading p{font-size:14px;line-height:1.55;color:#586c63}
+    .date-badge{border-radius:999px;padding:9px 14px;background:rgba(255,255,255,.78);font-size:12px}
+    .card{border-radius:19px;border-color:#e1e9e3;box-shadow:var(--shadow);transition:border-color .18s ease,box-shadow .18s ease}
+    .card-head,.checkin-card,.panel,.recent-card{padding-left:20px;padding-right:20px}
+    .card-title,.section-head h2,.panel-top h2,.recent-header h2{font-size:16px;letter-spacing:-.025em}
+    .card-desc,.panel-top p,.checkin-intro{font-size:12px;line-height:1.55}
+    .live-state{min-height:34px;border-radius:999px;background:#fff;padding:7px 11px;font-size:10px}
+    .stage{border-radius:16px;background:#18231f}
+    .primary,.secondary,.quiet{min-height:44px;border-radius:12px;padding:11px 16px;font-family:var(--font-ui);font-size:12px;letter-spacing:-.005em;transition:background-color .16s ease,border-color .16s ease,transform .1s ease,box-shadow .16s ease}
+    .primary{background:var(--green);box-shadow:0 3px 8px rgba(36,107,87,.12)}
+    .primary:hover{background:#1d5c49;box-shadow:0 5px 12px rgba(36,107,87,.17);transform:translateY(-1px)}
+    .primary:active,.secondary:active,.quiet:active{transform:scale(.98);transition-duration:.08s}
+    .secondary{background:#edf5ef}
+    .secondary:hover{background:#e0efe5}
+    .quiet:hover{background:#edf2ee}
+    .camera-device{min-height:44px;border-radius:12px;padding:10px 32px 10px 12px;font-size:12px}
+    .setup-row{gap:10px;padding-left:20px;padding-right:20px}
+    .setup-tip{min-height:64px;border:1px solid #edf2ed;border-radius:12px;background:#f8faf8;padding:10px 11px}
+    .camera-status-line{min-height:40px;border-radius:11px;font-size:11px}
+    .rating{gap:7px}
+    .rating button{min-height:44px;border-radius:11px;font-size:12px;transition:background-color .12s ease,border-color .12s ease,transform .1s ease}
+    .rating button:active{transform:scale(.96)}
+    .field-label{font-size:12px}
+    .note-input,.plan-form input,.plan-form textarea,.camera-device{font-family:var(--font-ui);font-size:13px}
+    .note-input,.plan-form input,.plan-form textarea{border-radius:12px;min-height:44px;padding:11px 12px}
+    .note-input::placeholder,.plan-form input::placeholder,.plan-form textarea::placeholder{color:#819087}
+    .stat{padding:15px 16px}
+    .stat-label{font-size:10px;letter-spacing:.075em;color:#61746b}
+    .stat-value{font-size:24px;line-height:1.15}
+    .home-focus{min-height:238px;padding:34px 36px;border-radius:23px;background:linear-gradient(118deg,#f1f8f3 0%,#e6f2e9 62%,#dceee1 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.8),0 10px 30px rgba(34,83,59,.06)}
+    .home-kicker{letter-spacing:.12em}
+    .home-focus h2{font-size:29px;line-height:1.15}
+    .home-focus p{font-size:13px;line-height:1.65}
+    .home-focus button{min-height:46px;border-radius:13px}
+    .home-art{opacity:.78}
+    .home-shortcuts{gap:14px}
+    .shortcut-card{min-height:104px;border-radius:17px;padding:17px;border-color:#e3eae4;box-shadow:0 2px 5px rgba(21,49,37,.025),0 8px 20px rgba(21,49,37,.035);transition:transform .12s ease,border-color .16s ease,box-shadow .16s ease}
+    .shortcut-card:hover{transform:translateY(-2px);border-color:#c5dccd;box-shadow:0 8px 20px rgba(21,49,37,.08)}
+    .shortcut-icon{width:40px;height:40px;border-radius:13px;background:#edf5ef}
+    .shortcut-card b{font-size:12px}
+    .shortcut-card small{font-size:11px;line-height:1.5}
+    .screen-heading{margin-bottom:27px}
+    .app-screen[hidden]{display:none!important}
+    .app-screen.screen-active{animation:screen-in .18s ease-out both}
+    @keyframes screen-in{from{opacity:.72;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}
+    .mobile-nav{background:rgba(250,252,250,.82);backdrop-filter:blur(24px) saturate(175%);-webkit-backdrop-filter:blur(24px) saturate(175%);border-top:1px solid rgba(214,226,217,.82);box-shadow:0 -8px 24px rgba(22,47,35,.055);padding-top:7px}
+    .mobile-nav button{min-height:48px;padding:5px 4px;border-radius:12px;font-family:var(--font-ui);font-size:10px;font-weight:600;transition:color .14s ease,background-color .14s ease,transform .1s ease}
+    .mobile-nav button.active{background:rgba(229,241,232,.86);color:#1c644e}
+    .mobile-nav button span{font-size:19px;line-height:1.05}
+    .icon-button{min-height:42px;min-width:42px;border-radius:12px}
+    .help-link{min-height:42px;padding:0 10px;border-radius:10px}
+    .dialog{border-radius:22px;box-shadow:0 30px 90px rgba(9,33,23,.3)}
+    .dialog::backdrop{background:rgba(11,31,23,.48);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
+    .dialog-inner{padding:24px}
+    .dialog-head h2{font-size:23px;line-height:1.15}
+    .dialog input,.dialog select,.dialog textarea{border-radius:11px}
+    .toast{border-radius:14px;box-shadow:0 12px 36px rgba(14,42,29,.2)}
+    @media(max-width:900px) and (min-width:651px){.app{grid-template-columns:244px minmax(0,1fr)}.sidebar{padding-left:12px;padding-right:12px}.content{padding-left:24px;padding-right:24px}.home-focus{padding:27px}.home-art{width:160px}}
+    @media(max-width:650px){body{font-size:15px}.topbar{height:58px;padding:0 15px}.content{padding:20px 14px calc(104px + env(safe-area-inset-bottom))}.welcome{align-items:flex-start;margin-bottom:18px}.welcome h1{font-size:27px}.welcome p{font-size:13px}.screen-heading{margin:4px 2px 19px}.screen-heading h1{font-size:28px}.screen-heading p{font-size:13px}.home-focus{min-height:194px;margin:13px 0 17px;padding:24px 20px;border-radius:20px}.home-focus h2{font-size:23px}.home-focus p{font-size:12px;max-width:300px}.home-focus>div:first-child{max-width:82%}.home-art{width:132px;height:120px;right:-22px;bottom:-18px;opacity:.48}.home-shortcuts{gap:9px}.shortcut-card{min-height:76px;padding:12px 13px;border-radius:15px}.shortcut-icon{width:38px;height:38px}.mobile-nav{padding-left:6px;padding-right:6px}.mobile-nav button{width:20%;max-width:none;font-size:9px}.mobile-nav button span{font-size:18px}.app-screen .card-head,.app-screen .checkin-card,.app-screen .panel,.app-screen .recent-card{padding-left:15px;padding-right:15px}.app-screen .stage{margin:0 11px;border-radius:14px}.app-screen .setup-row{padding-left:13px;padding-right:13px}.app-screen .camera-controls{gap:7px}.app-screen .camera-device{max-width:min(48%,180px)}.app-screen .stat{padding:13px}.app-screen .stat-value{font-size:22px}.app-screen .home-focus button{min-height:44px}.dialog-inner{padding:20px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto!important}.app-screen.screen-active{animation:none!important}*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
+    @media(prefers-reduced-transparency:reduce){.sidebar,.topbar,.mobile-nav{background:#fff;backdrop-filter:none;-webkit-backdrop-filter:none}.dialog::backdrop{background:rgba(11,31,23,.58);backdrop-filter:none;-webkit-backdrop-filter:none}}
+    @media(prefers-contrast:more){:root{--muted:#3c5148;--line:#a9b9af}.card,.shortcut-card,.camera-device,.rating button,.note-input,.plan-form input,.plan-form textarea{border-color:#899d90}.mobile-nav,.topbar{background:#fff}}
   </style>
+  <link rel="stylesheet" href="./styles.css?v=1" />
+  <link rel="stylesheet" href="./redesign.css?v=1" />
 </head>
 <body>
 <section id="authGate" hidden aria-labelledby="authGateTitle"><div class="auth-gate-card"><div class="brand-mark" aria-hidden="true">f</div><h1 id="authGateTitle">Welcome to Formnote</h1><p>Sign in to open your movement journal. Your camera feed stays on this device.</p><button id="authGateLogin" class="primary" type="button">Continue with Auth0</button><div class="auth-pending">Sign-in status loads securely from Auth0.</div></div></section>

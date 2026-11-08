@@ -32,7 +32,7 @@ export function createIntegratedApp(db, reportMode = 'mock') {
   app.use('/voice-assets', express.static(fileURLToPath(new URL('../data/voice/', import.meta.url)), { dotfiles: 'deny', index: false }));
   app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url)), { dotfiles: 'deny', index: false }));
   const root = new URL('../../', import.meta.url);
-  for (const name of ['index.html', 'app.js', 'auth0-config.js', 'companion.js', 'session-metrics.js']) {
+  for (const name of ['index.html', 'styles.css', 'redesign.css', 'app.js', 'auth0-config.js', 'companion.js', 'session-metrics.js']) {
     app.get('/' + name, (req, res) => res.sendFile(fileURLToPath(new URL(name, root))));
   }
   app.get('/', (req, res) => res.sendFile(fileURLToPath(new URL('index.html', root))));
