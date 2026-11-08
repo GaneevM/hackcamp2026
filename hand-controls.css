@@ -2,9 +2,18 @@
 .hand-controls-legend span{display:flex;align-items:center;gap:8px}.hand-controls-legend b{font:700 22px/1 system-ui;min-width:24px;text-align:center}
 .hand-controls-legend p{width:100%;margin:0;color:#52685a;font-size:12px;line-height:1.4}
 #handControlsStatus{display:block;margin:10px 18px;color:#52685a;font-size:13px;line-height:1.5}
-.hand-controls-hud{position:fixed;z-index:12000;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);width:max-content;max-width:min(92vw,620px);padding:14px 20px;background:#17392f;color:#fff;border:1px solid #7aa28b;border-radius:8px;font-size:17px;line-height:1.4;text-align:center;pointer-events:none}
-.hand-controls-hud progress{display:block;width:100%;height:6px;margin-top:10px;accent-color:#bce5c5}
+.hand-controls-hud{position:fixed;z-index:12000;right:20px;bottom:20px;left:auto;transform:none;width:min(360px,calc(100vw - 32px));max-width:calc(100vw - 32px);padding:13px;background:#082548;color:#fff;border:1px solid #345578;border-radius:14px;font-size:16px;line-height:1.4;text-align:left;pointer-events:none;box-shadow:0 12px 32px #071a3040}
+.hand-controls-hud-message{display:block;min-height:24px;font-weight:600}
+.hand-action-menu{display:grid;gap:5px;margin-top:9px;pointer-events:auto}
+.hand-action-menu[hidden]{display:none!important}
+.hand-action-option{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:10px;min-height:48px;width:100%;padding:7px 10px;border:1px solid #345578;border-radius:9px;background:#12365d;color:#fff;text-align:left;font:600 15px/1.25 system-ui,sans-serif;cursor:pointer}
+.hand-action-option:hover{background:#194371}
+.hand-action-option[aria-current="true"]{background:#ffc400;border-color:#ffc400;color:#082548}
+.hand-action-index{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#ffffff19;font-size:13px;font-variant-numeric:tabular-nums}
+.hand-action-option[aria-current="true"] .hand-action-index{background:#082548;color:#ffc400}
+.hand-action-value{font-size:12px;font-weight:700;opacity:.84}
+.hand-controls-hud progress{display:block;width:100%;height:6px;margin-top:10px;accent-color:#ffc400}
 .gesture-camera-pause{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:#172a22;color:#fff;text-align:center;padding:20px}
 .gesture-camera-pause h3{font:650 26px/1.2 system-ui;margin:0}.gesture-camera-pause p{font-size:16px;line-height:1.4;margin:0}.gesture-camera-pause button{margin-top:6px}
 .hand-controls-legend[hidden],.hand-controls-hud[hidden],.hand-controls-hud [hidden],.gesture-camera-pause[hidden]{display:none!important}
-@media(max-width:650px){.hand-controls-hud{bottom:calc(76px + env(safe-area-inset-bottom));font-size:15px;padding:11px 14px}.hand-controls-legend{gap:10px 18px;font-size:13px}.gesture-camera-pause h3{font-size:22px}.gesture-camera-pause p{font-size:14px}}
+@media(max-width:650px){.hand-controls-hud{right:10px;bottom:calc(76px + env(safe-area-inset-bottom));width:calc(100vw - 20px);max-width:calc(100vw - 20px);font-size:15px;padding:10px}.hand-action-option{min-height:44px;font-size:14px}.hand-controls-legend{gap:10px 18px;font-size:13px}.gesture-camera-pause h3{font-size:22px}.gesture-camera-pause p{font-size:14px}}

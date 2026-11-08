@@ -22,7 +22,14 @@ button, input, select, textarea { font-family: var(--font-ui); }
 }
 .brand { flex-direction: column; gap: 1px; margin: 0 auto 49px; color: #fff; }
 .brand-mark { display: grid; place-items: center; width: 186px; height: 102px; border-radius: 0; background: transparent; color: #fff; }
-.brand-mark svg { width: 184px; height: 100px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; transform: scaleX(1.45); }
+.brand-mark svg { width: 170px; height: 94px; fill: none; stroke: none; transform: none; }
+.brand-mark .logo-mountain { fill: currentColor; }
+.brand-mark .logo-flag-pole { fill: none; stroke: var(--yellow); stroke-width: 4; stroke-linecap: round; }
+.brand-mark .logo-flag { fill: var(--yellow); }
+.auth-brand-mark { width: 180px; height: 112px; grid-template-rows: 76px 30px; margin: 0 auto 14px; }
+.auth-brand-mark svg { width: 134px; height: 74px; }
+.auth-brand-name { color: #fff; font-size: 25px; font-weight: 750; letter-spacing: -1px; }
+.auth-brand-name span { color: var(--yellow); }
 .brand-name { color: #fff; font-family: var(--font-ui); font-size: 36px; font-weight: 750; letter-spacing: -1.4px; }
 .brand-name span { color: var(--yellow); }
 .nav-caption { margin: 0 14px 12px; color: #8FA1B7; font-size: 10px; letter-spacing: 1.5px; }
@@ -167,6 +174,15 @@ button, input, select, textarea { font-family: var(--font-ui); }
 .practice-choices { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 20px 13px; }
 .practice-choices button { padding: 8px 12px; border: 1px solid #DCE2E8; border-radius: 7px; background: #fff; color: #536276; font-size: 11px; font-weight: 650; }
 .practice-choices button[aria-pressed="true"] { border-color: var(--navy); background: var(--navy); color: #fff; }
+.practice-choices button.is-prescribed { display: grid; justify-items: start; gap: 4px; border-color: #B4CFCA; background: #F1F7F5; color: var(--navy); }
+.practice-choices button.is-prescribed[aria-pressed="true"] { border-color: var(--navy); background: var(--navy); color: #fff; }
+.plan-choice-tag { color: #3F746A; font-size: 8px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
+.practice-choices button.is-prescribed[aria-pressed="true"] .plan-choice-tag { color: #E8D48A; }
+.practice-plan-source { padding: 0 20px 8px; color: #486374; font-size: 11px; font-weight: 700; }
+.other-practice-choices { margin: 0 20px 12px; color: #596A7F; font-size: 11px; }
+.other-practice-choices summary { cursor: pointer; color: var(--navy); font-weight: 700; }
+.other-practice-choices p { margin: 6px 0 0; color: var(--muted); font-size: 10px; }
+.other-practice-choices .practice-choices { padding: 8px 0 0; }
 .stage { margin: 0 15px; max-height: 560px; border-radius: 8px; background: #101C2B; }
 .stage-shade { background: #101C2B; }
 .setup-message h3 { font-size: 16px; }
@@ -212,6 +228,17 @@ button, input, select, textarea { font-family: var(--font-ui); }
 .screen-plan .plan-form label { color: #55667A; font-size: 11px; }
 .screen-plan .plan-form input, .screen-plan .plan-form textarea { border-color: #DCE2E8; border-radius: 7px; }
 .screen-plan .plan-summary { border-radius: 7px; background: #EFF5F3; color: #315F55; }
+.screen-plan .plan-upload-primary { margin: 15px 0; padding: 0 0 14px; border-bottom: 1px solid #E3E7EC; }
+.screen-plan .plan-upload-primary .upload-button { min-height: 48px; padding: 12px 18px; font-size: 13px; }
+.plan-exercise-review { display: grid; gap: 10px; padding: 14px; border: 1px solid #DCE5E7; border-radius: 9px; background: #F8FAFB; }
+.plan-exercise-review h3 { margin: 0; color: var(--navy); font-size: 14px; }
+.plan-exercise-review p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.plan-exercise-options { display: grid; gap: 6px; }
+.plan-exercise-option { display: flex !important; grid-template-columns: auto 1fr; align-items: center; gap: 10px !important; padding: 9px 10px; border: 1px solid #E0E6EB; border-radius: 7px; background: #fff; cursor: pointer; }
+.plan-exercise-option input { width: 18px !important; min-height: 18px !important; height: 18px; accent-color: var(--navy); }
+.plan-exercise-option span { display: grid; gap: 2px; }
+.plan-exercise-option strong { color: var(--ink); font-size: 12px; }
+.plan-exercise-option small { color: var(--muted); font-size: 10px; font-weight: 450; }
 .screen-plan .upload-button { background: var(--navy); color: #fff; }
 .screen-plan .care-visit-layout { display: grid; gap: 15px; margin-top: 16px; }
 .screen-plan .care-visit-layout .care-panel { border: 1px solid #E5E9ED; border-radius: 12px; background: #fff; }
@@ -302,6 +329,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
   .card-head { padding: 14px 13px 10px; }
   .practice-choices { padding-inline: 12px; gap: 6px; }
   .practice-choices button { padding: 8px 9px; font-size: 10px; }
+  .practice-plan-source { padding-inline: 12px; }
+  .other-practice-choices { margin-inline: 12px; }
   .camera-controls { padding: 11px 12px; }
   .setup-row { grid-template-columns: 1fr; }
   .session-actions { padding: 10px; }

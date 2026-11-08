@@ -45,7 +45,7 @@ const movements = {
     prompt: 'Turn sideways; show shoulder, elbow, wrist.',
   },
   crossbody: {
-    title: 'Seated cross-body shoulder stretch', metric: 'Shoulder reach across chest', view: 'front view',
+    title: 'Across-the-torso seated arm stretch', metric: 'Shoulder reach across chest', view: 'front view',
     details: 'Estimated shoulder reach across the chest. Find a comfortable range; this is not a prescribed angle.',
     keys: ['shoulder', 'elbow', 'wrist'], frame: 'Face the camera · show both shoulders and the selected arm.',
     prompt: 'Sit comfortably facing the camera. Keep both shoulders visible and bring one relaxed arm across your chest.',
@@ -65,7 +65,7 @@ const app = {
 
 let companion = null, carePages = null;
 let visionRuntime = null, visionFiles = null, handLandmarker = null;
-const handControls={enabled:false,suspended:false,gesture:'none',seenAt:0,poseAt:0,lastDetectionAt:0,pose:null,side:0,failures:0,label:null,lastHand:null,scroll:new PalmScrollController(),commands:new FingerCommandHold(),surface:null};
+const handControls={enabled:false,suspended:false,gesture:'none',seenAt:0,poseAt:0,lastDetectionAt:0,pose:null,side:0,failures:0,label:null,lastHand:null,scroll:new PalmScrollController(),commands:new FingerCommandHold(),surface:null,menuSelection:0,menuAnchorY:null,menuLastAt:0,menuSamples:[],photoTimer:null,photoDeadline:0,photoAnnounced:0};
 const handCropCanvas=document.createElement('canvas');handCropCanvas.width=512;handCropCanvas.height=512;
 
 const readSessions = () => { try { return JSON.parse(localStorage.getItem(scopedStorageKey(SESSION_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(SESSION_KEY) : null) ?? '[]'); } catch { return []; } };
@@ -284,16 +284,50 @@ function handStatus(message,progress=null) {
   bar.hidden=progress===null;bar.value=progress??0;hud.hidden=!handControls.enabled;
   const layer=document.querySelector('dialog[open]')||document.body;
   if(hud.parentElement!==layer)layer.append(hud);
+  syncHandActionMenu();
 }
 function stopPalmScroll(){handControls.scroll.stop();handControls.surface=null;}
+const handActionNames={camera:'Camera',session:'Session',voice:'Voice',photo:'Capture photo'};
+function isPracticeScreen(){return $('screen-move')?.classList.contains('screen-active')||false;}
+function cameraIsOn(){return Boolean(app.stream?.getVideoTracks().some(track=>track.readyState==='live'));}
+function syncHandActionMenu(){
+  const menu=$('handActionMenu');if(!menu)return;
+  menu.hidden=!(handControls.enabled&&isPracticeScreen());
+  $('handActionCameraValue').textContent=cameraIsOn()?'ON · turn off':'OFF · turn on';
+  $('handActionSessionValue').textContent=app.running?'RUNNING · stop':app.countdownActive?'STARTING · cancel':'READY · start';
+  $('handActionVoiceValue').textContent=$('practiceVoice').getAttribute('aria-pressed')==='true'?'ON · mute':'OFF · enable';
+  const photoRemaining=handControls.photoTimer?Math.max(1,Math.ceil((handControls.photoDeadline-Date.now())/1000))+'s countdown':'5s delay';
+  $('handActionPhotoValue').textContent=photoRemaining;
+  menu.querySelectorAll('[data-hand-action]').forEach((button,index)=>{
+    button.setAttribute('aria-current',String(index===handControls.menuSelection));
+  });
+}
+function resetHandMenuMotion(){handControls.menuAnchorY=null;handControls.menuLastAt=0;handControls.menuSamples=[];}
+function navigateHandActionList(point,now,range){
+  handControls.menuSamples.push(point.y);if(handControls.menuSamples.length>3)handControls.menuSamples.shift();
+  const currentY=median(handControls.menuSamples);
+  if(handControls.menuAnchorY===null||now-handControls.menuLastAt>250){handControls.menuAnchorY=currentY;handControls.menuLastAt=now;handStatus('Raise or lower your open palm to move through the action list.');return;}
+  const step=Math.max(.055,Math.min(.12,(range||.1)*.55));
+  const delta=currentY-handControls.menuAnchorY,steps=Math.trunc(Math.abs(delta)/step);
+  if(steps){
+    const direction=delta>0?1:-1;
+    handControls.menuSelection=Math.max(0,Math.min(3,handControls.menuSelection+direction*steps));
+    handControls.menuAnchorY+=direction*step*steps;
+  }
+  handControls.menuLastAt=now;
+  const selected=Object.keys(handActionNames)[handControls.menuSelection];
+  handStatus(`Option ${handControls.menuSelection+1} of 4 · ${handActionNames[selected]}. Fist to stop, hold 1 finger to select.`);
+}
 function setHandControlsEnabled(enabled) {
   handControls.enabled=enabled;stopPalmScroll();handControls.commands.reset();handControls.gesture='none';
+  resetHandMenuMotion();if(!enabled)handControls.menuSelection=0;
   handControls.label=null;handControls.failures=0;handControls.lastHand=null;
   $('handControlsToggle').textContent=enabled?'Hand controls on':'Enable hand controls';
   $('handControlsToggle').setAttribute('aria-pressed',String(enabled));
-  if($('profileHandControlStatus'))$('profileHandControlStatus').textContent=enabled?'Hand controls are on. The camera must stay on for gesture input.':'Hand controls are off.';
+  if($('profileHandControlStatus'))$('profileHandControlStatus').textContent=enabled?'Hand controls are on. Open palm scrolls; on Practice it moves through the action list.':'Hand controls are off.';
   $('handControlsLegend').hidden=!enabled;$('handControlsHud').hidden=!enabled;
   if(!enabled)handStatus('Hand controls off. Enable them to use finger gestures.');
+  else syncHandActionMenu();
 }
 function setCameraViewPaused(paused) {
   if(!app.stream)return;
@@ -305,44 +339,83 @@ function setCameraViewPaused(paused) {
 function updatePausedCameraStatus() {
   if(!app.cameraPaused)return;
   $('trackingTitle').textContent='Exercise view paused';
-  $('trackingCopy').textContent='Hand sensing is still on. Hold one finger to resume, or use Turn camera off to stop the webcam.';
+  $('trackingCopy').textContent='Hand sensing is still on. Use the Practice action list to resume the camera, or turn it fully off to stop gestures.';
   cameraState('View paused · hand sensing on','neutral','Webcam on for hand controls','Hands only');$('startBtn').disabled=false;
 }
-function performHandCommand(command) {
-  if(document.querySelector('dialog[open]')||app.autoCalibration.active){handStatus('Close the current dialog or finish angle setup before using a finger command.');return;}
-  if(command==='one'){
-    if(app.running){handStatus('Hold two fingers to finish the session before pausing the camera view.');return;}
-    if(app.countdownActive)cancelCountdown();
-    setCameraViewPaused(!app.cameraPaused);
-    handStatus(app.cameraPaused?'View paused. Hand sensing stays on; one finger resumes.':'Camera view resumed. Relax your hand before another command.');return;
-  }
-  if(command==='two'){
-    if(app.running){endSession();handStatus('Session finished. Relax your hand before starting another.');return;}
-    if(app.countdownActive){cancelCountdown();handStatus('Session start cancelled. Relax your hand before another command.');return;}
-    setCameraViewPaused(false);appNavigation.switchTo('move');
-    if(!app.stream||!app.landmarker){handStatus('Enable the camera before starting a session.');return;}
-    $('startBtn').click();handStatus('Session starts in five seconds. Relax your hand and get into view.');
-  }
+function cancelGesturePhoto(message='Photo countdown cancelled.'){
+  if(!handControls.photoTimer)return false;
+  clearInterval(handControls.photoTimer);handControls.photoTimer=null;handControls.photoDeadline=0;handControls.photoAnnounced=0;
+  syncHandActionMenu();handStatus(message);return true;
 }
+function scheduleGesturePhoto(){
+  if(handControls.photoTimer){cancelGesturePhoto('Photo countdown cancelled.');return;}
+  if(!app.running||app.manual||$('video').readyState<2||!app.activeSessionId){handStatus('Start a camera session before choosing Capture photo.');return;}
+  handControls.photoDeadline=Date.now()+5000;handControls.photoAnnounced=0;
+  const tick=()=>{
+    if(!app.running||app.manual||$('video').readyState<2||!app.activeSessionId){cancelGesturePhoto('Photo countdown stopped because the session is no longer active.');return;}
+    const left=Math.max(0,Math.ceil((handControls.photoDeadline-Date.now())/1000));
+    if(left===0){clearInterval(handControls.photoTimer);handControls.photoTimer=null;handControls.photoDeadline=0;handControls.photoAnnounced=0;syncHandActionMenu();void captureSessionPhoto();return;}
+    if(left!==handControls.photoAnnounced){handControls.photoAnnounced=left;handStatus(`Photo in ${left}… hold your position. Select Capture photo again to cancel.`);}
+  };
+  tick();handControls.photoTimer=setInterval(tick,100);syncHandActionMenu();
+}
+async function performHandAction(action){
+  if(document.querySelector('dialog[open]')||app.autoCalibration.active){handStatus('Close the current dialog or finish angle setup before using an action.');return;}
+  if(action==='camera'){
+    if(cameraIsOn()){
+      if(app.running||app.autoCalibration.active){handStatus('Finish the active session or calibration before turning the camera off.');return;}
+      stopCamera();return;
+    }
+    handStatus('Turning the camera on…');
+    await startCamera();
+    if(!app.stream)return;
+    try{await loadHandTracker();setHandControlsEnabled(true);handStatus('Camera on. Open palm scrolls; Practice palm movement selects an action.');}
+    catch(error){setHandControlsEnabled(false);handStatus('Camera is on, but hand controls could not load.');console.warn('Hand controls unavailable',error);}
+    return;
+  }
+  if(action==='session'){
+    if(app.running){endSession();handStatus('Session finished and saved.');return;}
+    if(app.countdownActive){cancelCountdown();handStatus('Session start cancelled.');return;}
+    if(!app.stream||!app.landmarker){handStatus('Turn the camera on before starting a session.');return;}
+    setCameraViewPaused(false);appNavigation.switchTo('move');$('startBtn').click();
+    handStatus('Session starts in five seconds. Step into view.');return;
+  }
+  if(action==='voice'){
+    $('practiceVoice').click();handStatus($('practiceVoice').getAttribute('aria-pressed')==='true'?'Voice on.':'Voice off.');return;
+  }
+  if(action==='photo')scheduleGesturePhoto();
+}
+function performHandCommand(command) {
+  if(command!=='one')return;
+  if(!isPracticeScreen()){handStatus('Open Practice to select a camera, session, voice, or photo action.');return;}
+  const action=Object.keys(handActionNames)[handControls.menuSelection];
+  document.querySelector(`[data-hand-action="${action}"]`)?.click();
+}
+document.querySelectorAll('[data-hand-action]').forEach(button=>button.addEventListener('click',()=>void performHandAction(button.dataset.handAction)));
 function processControlHand(hand,now) {
   if(!handControls.enabled||handControls.suspended)return;
   if(hand)handControls.seenAt=now;
   if(handOnlyMode()){drawTrackedHand(hand);updateHandCameraStatus(now);}
-  const gesture=classifyHandGesture(hand);handControls.gesture=gesture;
-  const action=handControls.commands.update(gesture,now);
+  const previousGesture=handControls.gesture,gesture=classifyHandGesture(hand);handControls.gesture=gesture;
+  const action=handControls.commands.update(gesture==='one'?'one':gesture==='palm'||gesture==='fist'?gesture:'other',now);
   if(action){stopPalmScroll();performHandCommand(action);return;}
   if(gesture==='palm'){
     const aspect=$('video').videoWidth/$('video').videoHeight||1,palm=palmReading(hand,aspect);
+    if(isPracticeScreen()){
+      if(previousGesture!=='palm')resetHandMenuMotion();
+      stopPalmScroll();navigateHandActionList(palm.point,now,palm.range);return;
+    }
     if(!handControls.scroll.history.length&&!handControls.scroll.armed)handControls.scroll.ranges={up:palm.range,down:palm.range};
     handControls.scroll.observe(palm.point,now,Math.min(1600,innerHeight*1.8));
     const speed=handControls.scroll.targetVelocity;
     handStatus(!handControls.scroll.armed?'Hold your open palm briefly, then raise or lower it to scroll.':Math.abs(speed)>1?'Scrolling '+(speed<0?'up ↑':'down ↓')+' · fist to stop.':'Raise or lower your open palm to scroll. Fist to stop.');return;
   }
-  stopPalmScroll();
-  if(gesture==='one'||gesture==='two'){
-    const label=gesture==='one'?(app.cameraPaused?'Resume camera view':'Pause camera view'):(app.running?'Finish session':app.countdownActive?'Cancel session start':'Start session');
-    handStatus(handControls.commands.locked?'Relax your fingers before another command.':label+' · hold '+Math.max(0,(650-handControls.commands.elapsed)/1000).toFixed(1)+'s',handControls.commands.locked?null:handControls.commands.progress);
-  }else handStatus(gesture==='fist'?'Stopped ✊ · 1 finger: camera view · 2 fingers: session.':gesture==='none'?'Show one hand. 1 finger: camera view · 2 fingers: session.':'1 index finger: camera view · index + middle: session · open palm: scroll.');
+  stopPalmScroll();resetHandMenuMotion();
+  if(gesture==='one'){
+    if(isPracticeScreen())handStatus(handControls.commands.locked?'Relax your fingers before another selection.':`Hold 1 finger to select ${handActionNames[Object.keys(handActionNames)[handControls.menuSelection]]} · ${Math.max(0,(650-handControls.commands.elapsed)/1000).toFixed(1)}s`,handControls.commands.locked?null:handControls.commands.progress);
+    else handStatus('Open palm scrolls this page. Use Practice to select a camera, session, voice, or photo action.');
+  }else if(gesture==='fist')handStatus(isPracticeScreen()?`Stopped ✊ · ${handActionNames[Object.keys(handActionNames)[handControls.menuSelection]]} selected. Hold 1 finger to choose.`:'Stopped ✊ · move your open palm to scroll again.');
+  else handStatus(gesture==='none'?'Show one hand. Open palm: scroll or move through Practice actions · fist: stop · hold 1 finger: select.':'Use an open palm to scroll or navigate, a fist to stop, and one index finger to select.');
 }
 function controlScrollSurface(direction) {
   const dialog=document.querySelector('dialog[open]');let node=document.elementFromPoint(innerWidth/2,innerHeight/2);
@@ -366,7 +439,7 @@ async function toggleHandControls() {
   try{
     if(!app.stream)await startCamera();if(!app.stream)return;
     await loadHandTracker();if(!app.stream)return;
-    setHandControlsEnabled(true);handStatus('Hold 1 index finger for camera view, or 2 fingers for the session. Open palm scrolls; fist stops.');
+    setHandControlsEnabled(true);handStatus('Open palm scrolls pages. In Practice, move through the action list; fist stops and one finger selects.');
   }catch(error){setHandControlsEnabled(false);toast('Hand controls could not load. Check the camera and try again.');console.warn('Hand controls unavailable',error);}
   finally{$('handControlsToggle').disabled=false;}
 }
@@ -426,6 +499,7 @@ function stopCamera() {
     toast('Finish the active session or calibration before turning the camera off.');
     return;
   }
+  cancelGesturePhoto('Photo countdown cancelled because the camera was turned off.');
   if (app.countdownActive) cancelCountdown();
   app.cameraRequest++; app.cameraAcquiring = false;
   setHandControlsEnabled(false);
@@ -721,6 +795,7 @@ $('manualPlus').onclick = () => { app.reps += 1; $('repCount').textContent = Str
 
 function endSession() {
   if (!app.running) return;
+  cancelGesturePhoto('Photo countdown cancelled because the session ended.');
   const demo = $('exerciseSelect').value === 'wave';
   const duration = Math.max(1, Math.round((Date.now() - app.startedAt) / 60000));
   const highestAngle = app.sessionAngles.length ? Math.round(Math.max(...app.sessionAngles)) : null;
@@ -1150,7 +1225,7 @@ function buildAppScreens() {
   const progressAside = document.createElement('aside'); progressAside.className = 'progress-aside';
   progressLayout.append(progressMain, progressAside); progressMain.append(progress, recent); byName.progress.append(progressLayout);
   const progressTools = document.createElement('div'); progressTools.className = 'progress-tools';
-  progressTools.innerHTML = `<section class="card panel"><div class="panel-top"><div><h2>My physiotherapy plan</h2><p>Scan your paper or enter the goals your physiotherapist gave you.</p></div></div><form id="physioPlanForm" class="plan-form"><label>Diagnosis or focus<input id="planDiagnosis" maxlength="120" placeholder="Optional"></label><label>Instructions from your physio<textarea id="planInstructions" maxlength="500" placeholder="Movement, sets, reps, precautions"></textarea></label><div class="plan-grid"><label>Sessions per week<input id="planSessions" type="number" min="0" max="14" placeholder="e.g. 3"></label><label>Reps per session<input id="planReps" type="number" min="0" max="200" placeholder="e.g. 8"></label></div><button class="primary" type="submit">Save plan</button><div class="plan-summary" id="planSummary" aria-live="polite"></div><p class="fine-print">Progress is compared with the targets you enter. Follow your physio’s advice; this app does not interpret diagnoses.</p></form><div class="upload-row"><label class="secondary upload-button" for="diagnosisFile">Upload diagnosis</label><input id="diagnosisFile" type="file" accept="application/pdf,image/*" hidden><span class="upload-hint">PDF or photo · scanned on this device</span></div><div id="scanStatus" class="scan-status" role="status" aria-live="polite"></div><details id="scanReview" class="scan-review" hidden><summary>Review text found on paper</summary><textarea id="scanText" readonly></textarea><button type="button" id="applyScan" class="secondary">Fill plan fields from paper</button></details><div id="documentList" class="media-list"></div></section><section class="card panel"><div class="panel-top"><div><h2>Session photos</h2><p>Review photos you chose to save during practice.</p></div><span class="optional">Private to this device</span></div><p class="fine-print">Video is not saved. A photo is stored only when you capture it.</p><div id="photoGallery" class="photo-gallery"><div class="media-empty">No session photos yet.</div></div></section>`;
+  progressTools.innerHTML = `<section class="card panel"><div class="panel-top"><div><h2>My physiotherapy plan</h2><p>Upload the paper your physio gave you. Review the extracted details before saving.</p></div></div><div class="upload-row plan-upload-primary"><label class="primary upload-button" for="diagnosisFile">Upload diagnosis</label><input id="diagnosisFile" type="file" accept="application/pdf,image/*" hidden><span class="upload-hint">PDF or photo · scanned on this device</span></div><div id="scanStatus" class="scan-status" role="status" aria-live="polite"></div><form id="physioPlanForm" class="plan-form"><label>Diagnosis or focus<input id="planDiagnosis" maxlength="120" placeholder="Shown after scanning, or enter it here"></label><label>Instructions from your physio<textarea id="planInstructions" maxlength="500" placeholder="Movement, sets, reps, precautions"></textarea></label><section class="plan-exercise-review" id="planExerciseReview" hidden><div><h3>Exercises found in the paper</h3><p id="planExerciseHint">Check the scan and select only the exercises your physiotherapist prescribed.</p></div><div id="planExerciseOptions" class="plan-exercise-options"></div></section><div class="plan-grid"><label>Sessions per week<input id="planSessions" type="number" min="0" max="14" placeholder="e.g. 3"></label><label>Reps per session<input id="planReps" type="number" min="0" max="200" placeholder="e.g. 8"></label></div><button class="primary" type="submit">Save plan</button><div class="plan-summary" id="planSummary" aria-live="polite"></div><p class="fine-print">Confirm every detail against your paper. Only selected exercises appear first in Practice; the app does not prescribe movements.</p></form><details id="scanReview" class="scan-review" hidden><summary>Review all text found on the paper</summary><textarea id="scanText" readonly></textarea><button type="button" id="applyScan" class="secondary">Fill plan fields from paper</button></details><div id="documentList" class="media-list"></div></section><section class="card panel"><div class="panel-top"><div><h2>Session photos</h2><p>Review photos you chose to save during practice.</p></div><span class="optional">Private to this device</span></div><p class="fine-print">Video is not saved. A photo is stored only when you capture it.</p><div id="photoGallery" class="photo-gallery"><div class="media-empty">No session photos yet.</div></div></section>`;
   const planPanel = progressTools.children[0]; const photosPanel = progressTools.children[1];
   byName.plan.append(planPanel, report);
   homePhotos.append(photosPanel);
@@ -1176,7 +1251,7 @@ function buildAppScreens() {
   content.querySelector('.layout')?.remove(); content.querySelector('.lower')?.remove();
 
   const profileCard = document.createElement('section'); profileCard.className = 'profile-card card';
-  profileCard.innerHTML = '<div class="profile-identity"><span class="avatar profile-avatar">J</span><div><span class="home-kicker">YOUR ACCOUNT</span><h2 class="user-name" id="profileName">Your account</h2><p id="profileEmail">Signed in with Auth0</p></div></div><section class="profile-setting"><div><h3>Hands-free controls</h3><p>Use simple hand gestures to scroll, pause the camera view or control a session.</p></div><div id="profileHandControlsSlot"></div><div class="profile-hand-status"><span id="profileHandControlStatus">Hand controls are off.</span></div></section><section class="profile-setting profile-privacy"><div><h3>Camera privacy</h3><p>Movement is processed on your device. The camera only runs after you enable it.</p></div><button type="button" class="quiet" data-open-screen="move">Practice settings →</button></section><div class="profile-signout-slot" id="profileSignOutSlot"></div>';
+  profileCard.innerHTML = '<div class="profile-identity"><span class="avatar profile-avatar">J</span><div><span class="home-kicker">YOUR ACCOUNT</span><h2 class="user-name" id="profileName">Your account</h2><p id="profileEmail">Signed in with Auth0</p></div></div><section class="profile-setting"><div><h3>Hands-free controls</h3><p>Open palm scrolls. On Practice, move through camera, session, voice and photo actions; make a fist to stop and hold one finger to select.</p></div><div id="profileHandControlsSlot"></div><div class="profile-hand-status"><span id="profileHandControlStatus">Hand controls are off.</span></div></section><section class="profile-setting profile-privacy"><div><h3>Camera privacy</h3><p>Movement is processed on your device. The camera only runs after you enable it.</p></div><button type="button" class="quiet" data-open-screen="move">Practice settings →</button></section><div class="profile-signout-slot" id="profileSignOutSlot"></div>';
   byName.profile.append(profileCard);
   $('profileHandControlsSlot').append($('handControlsToggle'));
   const signOut = document.createElement('button'); signOut.id = 'authAction'; signOut.type = 'button'; signOut.className = 'profile-signout'; signOut.textContent = 'Sign out'; signOut.hidden = true; $('profileSignOutSlot').append(signOut);
@@ -1185,7 +1260,7 @@ function buildAppScreens() {
   const switchTo = (requestedKey) => {
     const key = requestedKey === 'visit' ? 'plan' : requestedKey;
     if (!byName[key]) return;
-    stopPalmScroll(); handControls.commands.cancel();
+    stopPalmScroll(); handControls.commands.cancel();resetHandMenuMotion();
     if (activeScreen === 'move' && key !== 'move' && app.running) { toast('Finish the active session before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.autoCalibration.active) { toast('Finish calibration before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.countdownActive) cancelCountdown();
@@ -1208,6 +1283,7 @@ function buildAppScreens() {
     document.querySelector('.breadcrumb b').textContent = key === 'home' ? 'Home' : screens.find((screen) => screen.dataset.screenView === key)?.querySelector('h1')?.textContent || 'Home';
     history.replaceState(null, '', '#'+key);
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    syncHandActionMenu();
   };
   document.querySelectorAll('[data-screen]').forEach((button) => button.addEventListener('click', () => switchTo(button.dataset.screen)));
   document.querySelectorAll('[data-open-screen]').forEach((button) => button.addEventListener('click', () => switchTo(button.dataset.openScreen)));
@@ -1290,29 +1366,82 @@ async function renderMedia() {
     list.querySelectorAll('[data-apply-document]').forEach((button) => button.onclick = async () => { const doc=docs.find((item)=>item.id===button.dataset.applyDocument); if (doc) applyExtractedText(doc.extractedText); });
   } catch (error) { console.warn('Local media storage unavailable', error); toast('Could not open local photo storage.'); }
 }
+const planExerciseCatalog=[
+  {id:'pushup',title:'Push-up',pattern:/\b(?:push[- ]?ups?|press[- ]?ups?)\b/i},
+  {id:'sit',title:'Sit-to-stand',pattern:/\b(?:sit[- ]?to[- ]?stands?|chair rises?)\b/i},
+  {id:'reach',title:'Overhead reach',pattern:/\b(?:overhead reach|shoulder flexion|arm raises?)\b/i},
+  {id:'crossbody',title:'Across-the-torso seated arm stretch',pattern:/\b(?:across[- ]the[- ]torso|across[- ]the[- ]chest|across[- ]the[- ]body|cross[- ]body|seated arm stretch)\b/i},
+  {id:'elbow',title:'Elbow bend',pattern:/\b(?:elbow bends?|elbow flexion|bicep curls?)\b/i},
+];
+function parsePlanExercises(text){
+  const lines=String(text||'').split(/\r?\n/).map(line=>line.trim()).filter(Boolean);
+  return planExerciseCatalog.filter(item=>item.pattern.test(lines.join('\n'))).map(item=>item.id);
+}
+function renderPlanExerciseReview(selectedIds=[],suggestedIds=selectedIds,show=selectedIds.length>0){
+  const review=$('planExerciseReview');if(!review)return;
+  const selected=new Set(selectedIds),suggested=new Set(suggestedIds);
+  review.hidden=!show;
+  $('planExerciseHint').textContent=suggested.size
+    ?'The scan suggested checked movements. Confirm each against your paper before saving; add another only if it is written in your plan.'
+    :'No supported exercise was clearly detected. Compare the extracted text and select only movements your physiotherapist prescribed.';
+  $('planExerciseOptions').innerHTML=planExerciseCatalog.map(item=>`<label class="plan-exercise-option"><input type="checkbox" data-plan-exercise="${item.id}" ${selected.has(item.id)?'checked':''}><span><strong>${escapeHtml(item.title)}</strong><small>${suggested.has(item.id)?'Suggested from scan · please confirm':'Select only if listed on your plan'}</small></span></label>`).join('');
+}
+function updatePracticeChoices(plan){
+  const screen=$('screen-move'),choices=screen?.querySelector('.practice-choices');if(!choices)return;
+  let note=$('practicePlanSource');
+  if(!note){note=document.createElement('div');note.id='practicePlanSource';note.className='practice-plan-source';choices.before(note);}
+  let other=$('otherPracticeChoices');
+  if(!other){other=document.createElement('details');other.id='otherPracticeChoices';other.className='other-practice-choices';other.innerHTML='<summary>Other movement demos</summary><p>Only use an exercise if it is in your physiotherapist’s instructions.</p><div class="practice-choices" role="group" aria-label="Other movement demos"></div>';choices.after(other);}
+  const otherList=other.querySelector('.practice-choices');
+  const buttons=[...screen.querySelectorAll('[data-movement]')];
+  buttons.forEach(button=>{if(!button.dataset.baseLabel)button.dataset.baseLabel=button.textContent.trim();});
+  const prescribed=new Set((Array.isArray(plan?.exercises)?plan.exercises:[]).filter(id=>planExerciseCatalog.some(item=>item.id===id)));
+  if(prescribed.size){
+    note.hidden=false;note.textContent='Your physiotherapist’s exercises · confirmed in My Plan';
+    other.hidden=false;choices.setAttribute('aria-label','Exercises in your physiotherapy plan');
+    for(const button of buttons){
+      const id=button.dataset.movement,isPrescribed=prescribed.has(id);
+      (isPrescribed?choices:otherList).append(button);
+      button.replaceChildren(document.createTextNode(button.dataset.baseLabel));
+      button.classList.toggle('is-prescribed',isPrescribed);
+      if(isPrescribed){const tag=document.createElement('span');tag.className='plan-choice-tag';tag.textContent='From your plan';button.append(tag);button.setAttribute('aria-label',`${button.dataset.baseLabel}, from your plan`);}
+      else button.removeAttribute('aria-label');
+    }
+  }else{
+    note.hidden=true;other.hidden=true;choices.setAttribute('aria-label','Choose your exercise');
+    for(const button of buttons){choices.append(button);button.replaceChildren(document.createTextNode(button.dataset.baseLabel));button.classList.remove('is-prescribed');button.removeAttribute('aria-label');}
+  }
+}
 function readPlan() { try { return JSON.parse(localStorage.getItem(scopedStorageKey(PLAN_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(PLAN_KEY) : null) ?? '{}'); } catch { return {}; } }
 function renderPlan() {
   const plan = readPlan();
   $('planDiagnosis').value = plan.diagnosis || ''; $('planInstructions').value = plan.instructions || ''; $('planSessions').value = plan.sessions || ''; $('planReps').value = plan.reps || '';
   const cutoff = Date.now() - 7 * 864e5; const practiced = readSessions().filter((row) => !row.checkin && !row.demo && new Date(row.date).getTime() >= cutoff).length;
   const target = Number(plan.sessions) || 0; const reps = Number(plan.reps) || 0;
-  $('planSummary').innerHTML = target ? `<b>${practiced} of ${target}</b> planned sessions in the last 7 days${reps ? ` · goal ${reps} reps/session` : ''}${plan.diagnosis ? `<br><span>${escapeHtml(plan.diagnosis)}</span>` : ''}` : 'Add the schedule from your physio to compare it with your logged sessions.';
+  const diagnosis=plan.diagnosis?`<br>Diagnosis: ${escapeHtml(plan.diagnosis)}`:'';
+  const exercises=Array.isArray(plan.exercises)?plan.exercises.map(id=>planExerciseCatalog.find(item=>item.id===id)?.title).filter(Boolean):[];
+  const exerciseSummary=exercises.length?`<br>Practice: ${exercises.map(escapeHtml).join(', ')}`:'';
+  $('planSummary').innerHTML = `${target ? `<b>${practiced} of ${target}</b> planned sessions in the last 7 days${reps ? ` · goal ${reps} reps/session` : ''}` : 'Review your physio’s instructions before starting.'}${diagnosis}${exerciseSummary}`;
+  renderPlanExerciseReview(plan.exercises||[],plan.exercises||[],Array.isArray(plan.exercises)&&plan.exercises.length>0);
+  updatePracticeChoices(plan);
 }
-$('physioPlanForm').onsubmit = (event) => { event.preventDefault(); localStorage.setItem(scopedStorageKey(PLAN_KEY), JSON.stringify({ diagnosis: $('planDiagnosis').value.trim(), instructions: $('planInstructions').value.trim(), sessions: $('planSessions').value, reps: $('planReps').value })); renderPlan(); carePages?.render(); toast('Physio plan saved on this device.'); };
+$('physioPlanForm').onsubmit = (event) => { event.preventDefault(); const exercises=[...document.querySelectorAll('[data-plan-exercise]:checked')].map(input=>input.dataset.planExercise); localStorage.setItem(scopedStorageKey(PLAN_KEY), JSON.stringify({ diagnosis: $('planDiagnosis').value.trim(), instructions: $('planInstructions').value.trim(), sessions: $('planSessions').value, reps: $('planReps').value, exercises })); renderPlan(); carePages?.render(); toast('Physio plan saved on this device.'); };
 function applyExtractedText(text) {
   const cleaned = String(text || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   if (!cleaned) { toast('No readable text found. Try a clearer photo or a text-based PDF.'); return; }
   $('scanText').value = cleaned; $('scanReview').hidden = false;
   const lines = cleaned.split(/\n/).map((line) => line.trim()).filter(Boolean);
-  const diagnosisLine = lines.find((line) => /^(diagnosis|primary diagnosis|condition|reason for referral)\s*[:\-]/i.test(line));
-  $('planDiagnosis').value = diagnosisLine ? diagnosisLine.replace(/^(diagnosis|primary diagnosis|condition|reason for referral)\s*[:\-]\s*/i, '').slice(0, 120) : '';
+  const diagnosisLine = lines.find((line) => /^(?:primary\s+)?(?:diagnosis|condition|reason for referral|assessment)\s*[:\-]/i.test(line));
+  if(diagnosisLine)$('planDiagnosis').value = diagnosisLine.replace(/^(?:primary\s+)?(?:diagnosis|condition|reason for referral|assessment)\s*[:\-]\s*/i, '').slice(0, 120);
   $('planInstructions').value = cleaned.slice(0, 500);
+  const suggestedExercises=parsePlanExercises(cleaned);
+  renderPlanExerciseReview(suggestedExercises,suggestedExercises,true);
   const sessions = cleaned.match(/\b(\d{1,2})\s*(?:sessions?|times?)\s*(?:per|a|each)\s*week\b|\b(\d{1,2})\s*(?:sessions?\s*)?(?:\/|per\s*)week\b|\b(\d{1,2})\s*x\s*\/\s*week\b/i);
   const sessionCount = sessions && (sessions[1] || sessions[2] || sessions[3]); if (sessionCount && Number(sessionCount) <= 14) $('planSessions').value = sessionCount;
   const setRep = cleaned.match(/\b(\d{1,2})\s*sets?\s*(?:of|x|×)?\s*(\d{1,3})\s*reps?\b/i);
   const repMatch = setRep ? Number(setRep[1]) * Number(setRep[2]) : cleaned.match(/\b(\d{1,3})\s*reps?\b/i)?.[1];
   if (repMatch && Number(repMatch) <= 200) $('planReps').value = String(repMatch);
-  $('scanStatus').textContent = 'Text extracted. Check the suggested fields, then save your plan.';
+  $('scanStatus').textContent = 'Text extracted on this device. Review the diagnosis, instructions, and suggested exercises before saving.';
   $('planSummary').textContent = 'Scanned suggestions are not saved until you choose Save plan.';
   $('scanReview').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -1360,12 +1489,13 @@ $('diagnosisFile').onchange = async (event) => {
   } catch (error) { console.warn('Document scan failed', error); $('scanStatus').textContent='Scan failed. Check your connection and try a clearer image or text PDF.'; toast('Could not scan that paper.'); }
   event.target.value='';
 };
-$('capturePhoto').onclick = async () => {
+async function captureSessionPhoto(){
   const video = $('video'); if (!app.running || app.manual || video.readyState < 2 || !app.activeSessionId) { toast('Start a camera session before taking a photo.'); return; }
   const canvas = document.createElement('canvas'); canvas.width = video.videoWidth; canvas.height = video.videoHeight; canvas.getContext('2d').drawImage(video, 0, 0);
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', .86)); if (!blob) { toast('Could not capture this frame.'); return; }
   try { await mediaPut('photos', { id: crypto.randomUUID?.() || String(Date.now()), sessionId: app.activeSessionId, exercise: activeMovement().title, date: new Date().toISOString(), blob }); await renderMedia(); toast('Session photo saved on this device.'); } catch { toast('Could not save the photo on this device.'); }
-};
+}
+$('capturePhoto').onclick = () => void captureSessionPhoto();
 renderPlan(); renderMedia();
 window.addEventListener('beforeunload', clearMediaUrls);
 
