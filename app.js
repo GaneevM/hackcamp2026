@@ -1,7 +1,11 @@
+import { AuthSession, loadAuthSdk } from './auth-flow.mjs';
 import { createCompanion } from './companion.js';
 import { createCarePages } from './care-pages.js';
 import { WaveCounter } from './session-metrics.js';
 const waveCounter = new WaveCounter();
+import { assessPushup, PushupCounter } from './pushup.mjs';
+const pushupCounter = new PushupCounter();
+let pushupPose = null, pushupUiAt = 0;
 const $ = (id) => document.getElementById(id);
 const SESSION_KEY = 'formnote_sessions_v2';
 const CALIBRATION_KEY = 'formnote_angle_calibration_v1';
@@ -35,10 +39,12 @@ const movements = {
     keys: ['shoulder', 'elbow', 'wrist'], frame: 'Side view · show shoulder, elbow, wrist.',
     prompt: 'Turn sideways; show shoulder, elbow, wrist.',
   },
+  pushup: { title:'Push-up · form demo', metric:'Elbow flexion', view:'side view', keys:['shoulder','elbow','wrist','hip','knee','ankle'], frame:'Side view · show your near-side arm, hip and legs.', prompt:'Place the camera side-on, at body height. Fit your whole body in view.' },
   wave: { title: 'Camera check · wave', metric: 'Arm landmarks', view: 'front view', keys: [], frame: 'Face camera · show shoulder, elbow, wrist.' },
 };
 const app = {
   stream: null, landmarker: null, running: false, raf: 0, facing: 'user', reps: 0,
+  countdownActive: false, countdownRemaining: 5, countdownTimer: null,
   phase: 'ready', confidence: null, pain: null, poseReady: false, manual: false,
   side: 'left', currentAngle: null, angleSamples: [], sessionAngles: [], activeSessionId: null,
   autoCalibration: { active: false, stage: 'intro', samples: [], phaseAt: null, lastSampleAt: 0, firstAngle: null },
@@ -52,7 +58,8 @@ const saveSessions = (rows) => localStorage.setItem(scopedStorageKey(SESSION_KEY
 const readCalibrations = () => { try { return JSON.parse(localStorage.getItem(scopedStorageKey(CALIBRATION_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(CALIBRATION_KEY) : null) ?? '{}'); } catch { return {}; } };
 const saveCalibrations = (values) => localStorage.setItem(scopedStorageKey(CALIBRATION_KEY), JSON.stringify(values));
 const activeMovement = () => movements[$('exerciseSelect').value] || movements.sit;
-const calibrationKey = (movement = $('exerciseSelect').value, side = $('bodySide').value) => `${movement}:${side}`;
+const pushupVariant = () => $('pushupVariant')?.value || 'floor';
+const calibrationKey = (movement = $('exerciseSelect').value, side = $('bodySide').value) => `${movement}${movement==='pushup'?`-${pushupVariant()}`:''}:${side}`;
 const getCalibration = (movement, side) => readCalibrations()[calibrationKey(movement, side)];
 
 $('todayDate').textContent = new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -107,7 +114,7 @@ function movementAngle(world, movement, side) {
     return inside === null ? null : 180 - inside;
   }
   if (movement === 'reach') return angle3(point('hip'), point('shoulder'), point('elbow'));
-  if (movement === 'elbow') {
+  if (movement === 'elbow' || movement === 'pushup') {
     const inside = angle3(point('shoulder'), point('elbow'), point('wrist'));
     return inside === null ? null : 180 - inside;
   }
@@ -146,8 +153,10 @@ function updateAngleText() {
 function readPose(landmarks, world) {
   const movement = $('exerciseSelect').value;
   app.lastLandmarks = landmarks;
+  if (movement === 'pushup') return readPushupPose(landmarks, world);
   const visibility = pointsFor(movement, landmarks);
   app.poseReady = visibility.ready;
+  if(app.countdownActive){$('startBtn').disabled=true;$('trackingTitle').textContent='Get ready';$('trackingCopy').textContent=`Step into view · ${app.countdownRemaining}s`;return visibility.ready;}
   if (movement === 'wave') {
     $('startBtn').disabled = app.running;
     $('trackingTitle').textContent = app.running ? 'Session active · camera check' : 'Camera check ready — press Start demo';
@@ -297,11 +306,11 @@ function monitor() {
                 : waveCounter.phase === 'moved' ? 'Bring your hand back toward where the wave started.'
                 : 'Move your raised hand sideways, then back. No need to cross your shoulder.';
             }
-          } else if (app.currentAngle !== null) {
+          } else if (movement !== 'pushup' && app.currentAngle !== null) {
             app.sessionAngles.push(app.currentAngle); countRep(app.currentAngle);
           }
         }
-      } else { app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
+      } else { if($('exerciseSelect').value==='pushup'){pushupCounter.pause();showPushupWaiting('Step into view.');} app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
       if (app.running && !app.manual) companion?.observe({ ready: app.poseReady, angle: app.currentAngle, reps: app.reps, phase: app.phase });
     } catch (error) { console.warn('Pose estimate skipped', error); }
   }
@@ -309,6 +318,7 @@ function monitor() {
 }
 
 function setActive(active) {
+  $('exerciseSelect').disabled=active;$('bodySide').disabled=active||$('exerciseSelect').value==='wave';
   $('movement').dataset.sessionActive = String(active);
   $('movement').dataset.manual = String(app.manual);
   if (active) $('movement').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -319,6 +329,7 @@ function setActive(active) {
   $('stageStop').textContent = isWave ? 'Finish camera check' : 'Finish & save';
   $('startBtn').textContent = active ? 'In progress' : isWave ? 'Start demo' : 'Start session';
   $('startBtn').disabled = active || (!app.manual && (!app.stream || !app.landmarker));
+  if ($('pushupVariant')) $('pushupVariant').disabled=active;
   if (active) {
     $('trackingTitle').textContent = app.manual ? 'Manual logging' : isWave ? 'Wave demo' : 'Tracking';
     $('trackingCopy').textContent = app.manual ? 'Add reps below.' : isWave ? 'Raise hand and wave.' : `${activeMovement().metric} estimate · move comfortably.`;
@@ -326,7 +337,54 @@ function setActive(active) {
   }
 }
 
+function setCountdownControls(active) {
+  if ($('pushupVariant')) $('pushupVariant').disabled=active;
+  const wave = $('exerciseSelect').value === 'wave';
+  $('manualBtn').disabled = active || wave;
+  $('exerciseSelect').disabled = active;
+  $('bodySide').disabled = active || wave;
+}
+
+function cancelCountdown() {
+  if (app.countdownTimer) clearInterval(app.countdownTimer);
+  app.countdownTimer = null; app.countdownActive = false;
+  $('sessionCountdown').hidden = true;
+  app.activeSessionId = null; app.manual = false;
+  setCountdownControls(false);
+  setActive(false);
+  $('trackingTitle').textContent = app.poseReady ? 'Ready' : 'Adjust your camera view';
+  $('trackingCopy').textContent = app.poseReady ? 'Move comfortably. Follow your plan.' : activeMovement().frame;
+  cameraState(app.poseReady ? 'Ready' : 'Adjust view', app.poseReady ? 'good' : 'neutral', app.poseReady ? 'Camera angle is an estimate.' : activeMovement().frame, app.poseReady ? 'Ready' : '0 joints');
+}
+
+function startCountdown() {
+  app.countdownActive = true; app.countdownRemaining = 5;
+  $('countdownNumber').textContent = '5'; $('sessionCountdown').hidden = false;
+  $('startBtn').disabled = true; setCountdownControls(true); $('trackingTitle').textContent = 'Get ready';
+  $('trackingCopy').textContent = 'Step back into full view · 5s';
+  cameraState('Get ready', 'neutral', 'Step back into full view before tracking starts.', `${app.poseReady ? 'Ready' : '0'} joints`);
+  app.countdownTimer = setInterval(() => {
+    app.countdownRemaining -= 1;
+    if (app.countdownRemaining <= 0) {
+      clearInterval(app.countdownTimer); app.countdownTimer = null;
+      app.countdownActive = false; $('sessionCountdown').hidden = true;
+      if (!app.poseReady) {
+        app.activeSessionId = null; setCountdownControls(false); setActive(false);
+        $('trackingTitle').textContent = 'Step into view'; $('trackingCopy').textContent = activeMovement().frame;
+        toast('Step back into view, then start again.');
+        return;
+      }
+      app.startedAt = Date.now(); setCountdownControls(false); setActive(true);
+      toast($('exerciseSelect').value === 'wave' ? 'Wave to test tracking.' : 'Tracking started. Follow your plan.');
+      return;
+    }
+    $('countdownNumber').textContent = String(app.countdownRemaining);
+    $('trackingCopy').textContent = `Step back into full view · ${app.countdownRemaining}s`;
+  }, 1000);
+}
+
 function beginSession(manual = false) {
+  pushupCounter.reset(); pushupPose=null;
   $('newSession').hidden = true;
   if (app.pain >= 7) { $('painNote').classList.add('show'); toast('Your pain check-in is noted. Follow your care team’s guidance before deciding whether to exercise.'); }
   app.manual = manual; app.reps = 0; app.phase = 'ready'; app.sessionStartAngle = null; app.sessionAngles = []; app.waveSide = null; app.waveSwitches = 0; app.startedAt = Date.now(); app.activeSessionId = crypto.randomUUID?.() || String(Date.now());
@@ -345,15 +403,17 @@ function beginSession(manual = false) {
   const plannedReps = Number(readPlan().reps);
   companion?.start({ manual, movement: $('exerciseSelect').value,
     targetReps: Number.isInteger(plannedReps) && plannedReps > 0 && plannedReps <= 200 ? plannedReps : null });
-  setActive(true); toast($('exerciseSelect').value === 'wave' ? 'Wave to test tracking.' : 'Session started. Follow your plan.');
+  if(manual) setActive(true); else startCountdown();
 }
 
 $('startBtn').onclick = () => {
+  if(app.running||app.countdownActive)return;
   if (!app.stream || !app.landmarker) { toast('Set up camera or log manually.'); return; }
   beginSession(false);
   if (!app.poseReady) toast('Session started. Step into view; counting waits for the selected joints.');
 };
-$('manualBtn').onclick = () => { if (app.running) { toast('Finish the current session first.'); return; } beginSession(true); };
+$('cancelCountdown').onclick=cancelCountdown;
+$('manualBtn').onclick = () => { if (app.running||app.countdownActive) { toast('Finish the current session first.'); return; } beginSession(true); };
 
 const manualCounter = document.createElement('div'); manualCounter.id = 'manualCounter';
 manualCounter.style.cssText = 'display:none;justify-content:center;align-items:center;gap:10px;padding:0 16px 15px';
@@ -374,7 +434,9 @@ function endSession() {
     reps: app.reps, duration, angle: highestAngle, startAngle,
     excursion: highestAngle !== null && startAngle !== null ? Math.max(0, highestAngle - startAngle) : null,
     confidence: app.confidence, pain: app.pain, note: $('note').value.trim(), manual: app.manual, checkin: false,
+    ...($('exerciseSelect').value==='pushup'?{variant:pushupVariant(),form:app.manual?null:{version:1,reps:pushupCounter.reps,average:pushupCounter.reps.length?Math.round(pushupCounter.reps.reduce((n,r)=>n+r.score,0)/pushupCounter.reps.length):null}}:{}),
   };
+  if($('pushupVariant')) $('pushupVariant').disabled=false;
   companion?.finish(row);
   $('newSession').hidden = false;
   $('movement').dataset.sessionActive = 'false'; $('movement').dataset.manual = 'false';
@@ -420,6 +482,7 @@ function clearCheckinAnswers() {
 
 function updateMovementUI() {
   const movement = $('exerciseSelect').value; const wave = movement === 'wave'; const cfg = activeMovement();
+  if($('pushupCoach')){$('pushupCoach').hidden=movement!=='pushup';pushupCounter.reset();pushupPose=null;}
   document.querySelectorAll('[data-movement]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.movement === movement)));
   $('exerciseTitle').textContent = wave ? 'Camera wave demo' : cfg.title;
   $('exerciseDesc').textContent = wave ? 'Wave to test tracking' : movement === 'sit' ? '2 sets · 8 reps · chair' : cfg.metric;
@@ -449,6 +512,7 @@ $('exerciseSelect').addEventListener('change', updateMovementUI);
 $('bodySide').addEventListener('change', () => { app.side = $('bodySide').value; app.poseReady = false; app.currentAngle = null; updateAngleText(); render(); });
 
 const autoPoseCopy = {
+  pushup: ['Use your chosen push-up variation. Hold your comfortable starting position with arms extended, without locking them.', 'Bend your elbows only to your comfortable depth. Hold briefly; do not push into pain.'],
   sit: ['Sit upright on your chair with feet flat, in the position you usually start from.', 'Stand or sit back down slowly to a comfortable endpoint, following your physio’s plan.'],
   reach: ['Stand or sit comfortably with your arm relaxed by your side.', 'Raise your arm only to a comfortable endpoint; keep your trunk relaxed.'],
   elbow: ['Keep your upper arm relaxed by your side and begin with your elbow comfortable.', 'Bend your elbow to a comfortable endpoint without forcing it.'],
@@ -542,7 +606,7 @@ function renderCalibration() {
   const movement = $('exerciseSelect').value; const side = $('bodySide').value; const cfg = activeMovement(); const cal = getCalibration(movement, side);
   $('angleMetricName').textContent = movement === 'wave' ? 'Wave landmarks · camera test only' : `${cfg.metric} · ${side} side · ${cfg.view} · degrees`;
   if (!cal) { $('calibrationValues').innerHTML = '<div class="angle-empty">Set your comfortable range. Add a physio goal if you have one.</div>'; return; }
-  const current = readSessions().filter((row) => row.movement === movement && row.side === side && row.angle !== null && !row.demo).at(-1)?.angle ?? cal.endAngle;
+  const current = readSessions().filter((row) => row.movement === movement && row.side === side && (movement !== 'pushup' || row.variant === pushupVariant()) && row.angle !== null && !row.demo).at(-1)?.angle ?? cal.endAngle;
   const goal = cal.targetAngle === null ? 'Not set' : `${cal.targetAngle}°`;
   const gap = cal.targetAngle === null ? 'No goal set' : `${Math.abs(cal.targetAngle - current)}° from goal`;
   $('calibrationValues').innerHTML = `<div class="angle-cell"><span>Start</span><strong>${cal.startAngle}°</strong></div><div class="angle-cell"><span>Comfortable range</span><strong>${cal.endAngle}°</strong></div><div class="angle-cell"><span>Latest</span><strong>${current}°</strong></div><div class="angle-cell"><span>Physio goal</span><strong>${goal}</strong><span>${gap}</span></div>`;
@@ -551,7 +615,7 @@ function renderCalibration() {
 
 function analyzeMovement(rows, calibration) {
   const movement = $('exerciseSelect').value; const side = $('bodySide').value;
-  const sessions = rows.filter((row) => !row.checkin && row.movement === movement && row.side === side && row.angle !== null && !row.demo);
+  const sessions = rows.filter((row) => !row.checkin && row.movement === movement && row.side === side && (movement !== 'pushup' || row.variant === pushupVariant()) && row.angle !== null && !row.demo);
   const ordered = sessions.sort((a, b) => new Date(a.date) - new Date(b.date));
   const recent = ordered.slice(-3); const latest = ordered.at(-1); const avg = recent.length ? Math.round(recent.reduce((sum, row) => sum + row.angle, 0) / recent.length) : null;
   const first = ordered[0];
@@ -563,7 +627,7 @@ function analyzeMovement(rows, calibration) {
 
 function renderChart(rows) {
   const movement = $('exerciseSelect').value; const side = $('bodySide').value; const calibration = getCalibration(movement, side);
-  const points = rows.filter((row) => !row.checkin && row.movement === movement && row.side === side && row.angle !== null && !row.demo).sort((a, b) => new Date(a.date) - new Date(b.date)).slice(-10);
+  const points = rows.filter((row) => !row.checkin && row.movement === movement && row.side === side && (movement !== 'pushup' || row.variant === pushupVariant()) && row.angle !== null && !row.demo).sort((a, b) => new Date(a.date) - new Date(b.date)).slice(-10);
   const grid = $('chartGrid'); const chartEmpty = $('chartEmpty'); const height = 135; const left = 43; const right = 495; const top = 8; const bottom = 112;
   const y = (value) => bottom - Math.max(0, Math.min(180, value)) / 180 * (bottom - top);
   grid.innerHTML = [0,45,90,135,180].map((tick) => `<line x1="${left}" y1="${y(tick)}" x2="${right}" y2="${y(tick)}" stroke="#e8ece8" stroke-width="1"/><text x="${left-7}" y="${y(tick)+3}" text-anchor="end" fill="#859189" font-size="9">${tick}°</text>`).join('');
@@ -583,6 +647,12 @@ function renderChart(rows) {
 
 function renderAnalysis(rows) {
   const movement = $('exerciseSelect').value; const side = $('bodySide').value; const cfg = activeMovement();
+  if(movement==='pushup'){
+    const sessions=rows.filter(row=>row.movement==='pushup'&&row.side===side&&row.variant===pushupVariant());
+    const scored=sessions.filter(row=>Number.isFinite(row.form?.average));
+    $('analysisSummary').textContent=`${sessions.length} ${pushupVariant()} push-up sessions${scored.length?` · latest average alignment match ${scored.at(-1).form.average}%`:''}. Chart shows bend depth, not recovery or form accuracy. Compare the same variation, side and camera position.`;
+    return;
+  }
   if (movement === 'wave') { $('analysisSummary').textContent = 'Wave demo is not included in progress.'; return; }
   const cal = getCalibration(movement, side); const result = analyzeMovement(rows, cal);
   if (!result.sessions.length) { $('analysisSummary').textContent = cal ? 'Calibration saved. Log a session to compare.' : 'Set a comfortable baseline to start.'; return; }
@@ -598,14 +668,15 @@ function renderAnalysis(rows) {
 }
 
 function escapeHtml(value = '') { return String(value).replace(/[&<>"']/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[character])); }
+function pushupFormText(row) { return row.movement==='pushup'?` · ${escapeHtml(row.variant||'floor')}${Number.isFinite(row.form?.average)?` · alignment match ${row.form.average}%`:''}`:''; }
 
 function reportData() {
   const rows = readSessions(); const practice = rows.filter((row) => !row.checkin && !row.demo); const movement = $('exerciseSelect').value; const side = $('bodySide').value;
-  const cal = movement === 'wave' ? null : getCalibration(movement, side); const scoped = practice.filter((row) => row.movement === movement && row.side === side && row.angle !== null).sort((a,b) => new Date(a.date)-new Date(b.date));
+  const cal = movement === 'wave' ? null : getCalibration(movement, side); const scoped = practice.filter((row) => row.movement === movement && row.side === side && (movement !== 'pushup' || row.variant === pushupVariant()) && row.angle !== null).sort((a,b) => new Date(a.date)-new Date(b.date));
   const first = scoped[0]; const latest = scoped.at(-1); const recent = scoped.slice(-3); const avg = recent.length ? Math.round(recent.reduce((sum,row)=>sum+row.angle,0)/recent.length) : null;
   const checkins=rows.filter((row)=>row.confidence!==null||row.pain!==null).sort((a,b)=>new Date(a.date)-new Date(b.date));
   const latestCheckin=[...checkins].reverse()[0]; const notes=rows.filter((row)=>row.note).slice(-5).map((row)=>row.note);
-  const measured=scoped.slice(-5).map((row)=>`${new Date(row.date).toLocaleDateString()} · ~${escapeHtml(row.angle)}° · ${row.reps} reps`).join('\n') || 'No camera sessions yet.';
+  const measured=scoped.slice(-5).map((row)=>`${new Date(row.date).toLocaleDateString()} · ~${escapeHtml(row.angle)}° · ${row.reps} reps${pushupFormText(row)}`).join('\n') || 'No camera sessions yet.';
   const angleText=latest?`${activeMovement().metric} (${side}): baseline ${cal?.endAngle??first.angle}° · recent avg ${avg}° · latest ${latest.angle}°${cal?.targetAngle!==null&&cal?.targetAngle!==undefined?` · physio goal ${cal.targetAngle}°`:''}`:'No angle sessions yet.';
   const painText=latestCheckin?`Confidence ${latestCheckin.confidence??'—'}/5 · pain ${latestCheckin.pain??'—'}/10`:'No check-in yet.';
   const text=`FORMNOTE · VISIT PREP\n${new Date().toLocaleDateString()} · Jamie Parker\n\nMOVEMENT\n${angleText}\n${measured}\n\nCHECK-IN\n${painText}\n\nNOTES\n${notes.length?notes.map((note)=>`• ${note}`).join('\n'):'None yet.'}\n\nASK MY PHYSIO\n• Is this camera angle useful for my plan?\n• Is my goal still right for me?\n• What should I do if pain changes?\n\nCamera angles are estimates. Review before sharing.`;
@@ -614,6 +685,7 @@ function reportData() {
 
 function updateCue(data = reportData()) {
   const { latest, first, cal } = data;
+  if($('exerciseSelect').value==='pushup') { $('cueText').textContent=latest?.form?.average!==null&&Number.isFinite(latest?.form?.average)?`Latest ${latest.variant} push-up session: ${latest.reps} reps · ${latest.form.average}% average alignment match. Compare with your physio; this score only covers the visible body line.`:'Try the push-up form demo to record body alignment and elbow bend. Your physio sets the appropriate variation and range.';return; }
   if (!latest) { $('cueText').textContent = 'Log sessions to compare angles. Goals come from your physio.'; return; }
   const baseline = cal?.endAngle ?? first?.angle; const delta = latest.angle - baseline;
   $('cueText').textContent = `Latest ${latest.metric}: ~${latest.angle}°${baseline !== undefined ? ` (${delta > 0 ? '+' : ''}${delta}° from baseline)` : ''}. Confidence ${latest.confidence ?? '—'}/5 · pain ${latest.pain ?? '—'}/10.`;
@@ -622,14 +694,88 @@ function updateCue(data = reportData()) {
 function render() {
   carePages?.render();
   const rows = readSessions(); const movement = $('exerciseSelect').value; const side = $('bodySide').value;
+  renderJournalOverview(rows);
   renderCalibration(); renderChart(rows); renderAnalysis(rows); updateCue(reportData()); renderPlan();
   const practice=rows.filter((row)=>!row.checkin&&!row.demo); const days=new Set(practice.filter((row)=>Date.now()-new Date(row.date).getTime()<7*864e5).map((row)=>new Date(row.date).toDateString())).size;
   $('metricStreak').textContent=String(days); const list=$('sessionList');
   if (!rows.length) { list.innerHTML='<div class="empty-sessions">No sessions yet.</div>'; $('reportStatus').textContent='No sessions yet.'; return; }
-  list.innerHTML=rows.slice(-5).reverse().map((row)=>`<div class="session-row"><div class="session-date"><strong>${new Date(row.date).getDate()}</strong>${new Date(row.date).toLocaleDateString(undefined,{month:'short'})}</div><div class="session-main"><b>${row.checkin?'Check-in':escapeHtml(row.exercise)}</b><span>${row.checkin?'Personal check-in saved':`${row.reps??0} reps · ${row.manual?'manual log':'camera session'}${row.angle!==null?` · ~${row.angle}° ${escapeHtml(row.metric)}`:''}`}</span></div><span class="session-pain">${row.pain===null?'Pain —':`Pain ${row.pain}/10`}</span></div>`).join('');
+  list.innerHTML=rows.slice(-5).reverse().map((row)=>`<div class="session-row"><div class="session-date"><strong>${new Date(row.date).getDate()}</strong>${new Date(row.date).toLocaleDateString(undefined,{month:'short'})}</div><div class="session-main"><b>${row.checkin?'Check-in':escapeHtml(row.exercise)}</b><span>${row.checkin?'Personal check-in saved':`${row.reps??0} reps · ${row.manual?'manual log':'camera session'}${row.angle!==null?` · ~${row.angle}° ${escapeHtml(row.metric)}`:''}${pushupFormText(row)}`}</span></div><span class="session-pain">${row.pain===null?'Pain —':`Pain ${row.pain}/10`}</span></div>`).join('');
   const num=practice.length; $('reportStatus').textContent=`${num} sessions · ${rows.filter((row)=>row.checkin||row.confidence!==null||row.pain!==null).length} check-ins`;
 }
 
+function pushupThresholds() {
+  const cal=getCalibration('pushup',$('bodySide').value);
+  if(cal && cal.startAngle<=40 && cal.endAngle-cal.startAngle>=25) return {top:Math.min(45,cal.startAngle+12),bottom:Math.max(cal.startAngle+30,cal.endAngle-8),personal:true};
+  return {top:25,bottom:65,personal:false};
+}
+function showPushupWaiting(copy) {
+  if(!$('pushupScore'))return;
+  $('pushupScore').textContent='—'; $('pushupElbow').textContent='—'; $('pushupBody').textContent='—'; $('pushupDepth').textContent='—';
+  $('pushupCue').textContent=copy; $('pushupPhase').textContent='Waiting for pose';
+}
+function readPushupPose(landmarks,world) {
+  const now=performance.now();
+  pushupPose=assessPushup({landmarks,world,side:app.side,variant:pushupVariant(),aspect:($('video').videoWidth||16)/($('video').videoHeight||9)});
+  app.poseReady=pushupPose.valid;
+  const threshold=pushupThresholds();
+  if(!pushupPose.valid){
+    app.currentAngle=null;app.angleSamples=[];pushupCounter.pause();
+    // A lost pose interrupts a calibration hold as well as a repetition.
+    if(app.autoCalibration.active){app.autoCalibration.samples=[];app.autoCalibration.phaseAt=null;}
+    $('startBtn').disabled=app.running||app.countdownActive||!app.stream||!app.landmarker;updateAngleText();
+    if(now-pushupUiAt>200){pushupUiAt=now;showPushupWaiting(pushupPose.cue);cameraState('Adjust view','bad',pushupPose.cue,`${pushupPose.count}/${pushupPose.total} joints`);}
+    return false;
+  }
+  app.angleSamples.push(pushupPose.flexion);if(app.angleSamples.length>7)app.angleSamples.shift();
+  app.currentAngle=Math.round(median(app.angleSamples));
+  pushupPose.flexion=app.currentAngle; collectAutoCalibration(); updateAngleText();
+  if(app.running&&!app.manual){
+    app.sessionAngles.push(app.currentAngle);
+    const rep=pushupCounter.update(pushupPose,now,threshold);
+    if(rep){app.reps=pushupCounter.reps.length;$('repCount').textContent=String(app.reps);}
+  }
+  $('startBtn').disabled=app.running||app.countdownActive;
+  if(now-pushupUiAt<200)return true;pushupUiAt=now;
+  const phase=pushupCounter.phase;
+  const cue=!pushupPose.aligned?pushupPose.cue:phase==='find-top'?'Hold your starting position with arms extended, without locking.':phase==='lower'?`Lower slowly within your comfortable range${app.currentAngle>=threshold.bottom?' · depth reached':''}.`:'Press back to your starting position, keeping your trunk steady.';
+  $('pushupScore').textContent=`${pushupPose.score}%`;
+  $('pushupBody').textContent=`${Math.round(pushupPose.bodyAngle)}°`;
+  $('pushupElbow').textContent=`${180-app.currentAngle}°`;
+  $('pushupDepth').textContent=`${Math.min(100,Math.round(app.currentAngle/threshold.bottom*100))}%`;
+  $('pushupPhase').textContent=app.countdownActive?'Get ready':!app.running?'Camera preview':phase==='find-top'?'Find starting position':phase==='lower'?'Lower':'Press up';
+  $('pushupCue').textContent=app.countdownActive?`Get into position · ${app.countdownRemaining}s`:cue;
+  $('pushupTarget').textContent=threshold.personal?`Your calibrated range · bend target ~${threshold.bottom}°`:`Demo bend target ~${threshold.bottom}° · calibrate to use your comfortable range`;
+  $('trackingTitle').textContent=app.countdownActive?'Get ready':`${pushupPose.score}% alignment match`;
+  $('trackingCopy').textContent=cue;
+  cameraState(app.countdownActive?'Get ready':app.running?'Coaching':'Ready',pushupPose.aligned?'good':'neutral',cue,`${pushupPose.count}/${pushupPose.total} joints`);
+  return true;
+}
+function buildPushupCoach() {
+  const coach=document.createElement('section');coach.id='pushupCoach';coach.className='pushup-coach';coach.hidden=true;
+  coach.innerHTML=`<div class="pushup-intro"><div><span class="eyebrow">Guided form demo</span><h2>Push-up</h2><p>Lower with control. Press up as one unit.</p></div><label>Variation<select id="pushupVariant"><option value="floor">Floor · full body</option><option value="knees">Knees supported</option><option value="wall">Wall push-up</option></select></label></div>
+  <div class="pushup-lesson"><div class="pushup-illustration"><svg id="pushupIllustration" viewBox="0 0 320 170" role="img" aria-label="Push-up starting position, side view"></svg><div class="pushup-demo-controls"><button type="button" data-pushup-step="top" aria-pressed="true">1. Start / press</button><button type="button" data-pushup-step="bottom" aria-pressed="false">2. Lower</button></div></div><ol><li>Camera side-on; choose the side nearest the lens. Show hands, shoulders, hips and legs.</li><li id="pushupVariantCopy">Keep shoulders, hips and ankles in line. Start with arms extended, without locking.</li><li>Bend within your comfortable range, then press back up. Stop if pain increases.</li></ol></div>
+  <div class="pushup-live"><div class="pushup-match"><span>Alignment match</span><strong id="pushupScore">—</strong><small>Visible body line · estimated</small></div><div class="pushup-metrics"><div><span>Elbow angle</span><b id="pushupElbow">—</b></div><div><span>Body line · straight ≈ 180°</span><b id="pushupBody">—</b></div><div><span>Bend target reached</span><b id="pushupDepth">—</b></div></div></div>
+  <div class="pushup-feedback"><span id="pushupPhase">Waiting for pose</span><p id="pushupCue" role="status" aria-live="polite">Set up your camera, then hold the starting position.</p><small id="pushupTarget">Demo thresholds · use Quick calibrate for your comfortable range.</small></div>
+  <details class="pushup-method"><summary>What this checks</summary><p>Estimated 3D elbow angle and shoulder–hip–ankle alignment (shoulder–hip–knee for knee push-ups). Reps need a steady start, bend, and return. Tracking pauses when joints leave view. The percentage measures a match to these limited checks; it is not medical accuracy or a complete form assessment.</p><p>The default rep thresholds are prototype settings, not prescribed rehabilitation angles. Quick calibrate records a separate range for each variation and side. A side camera cannot reliably judge elbow flare, shoulder-blade movement, hand pressure or pain. Only use exercises approved for your plan.</p><a href="https://www.southtees.nhs.uk/resources/combined-press-ups/" target="_blank" rel="noopener">NHS: wall and knee press-ups</a> · <a href="https://www.acefitness.org/resources/everyone/exercise-library/41/push-up/" target="_blank" rel="noopener">ACE: floor push-up technique</a></details>`;
+  const controls=$('movement').querySelector('.session-actions')||$('movement').querySelector('.camera-controls');controls.after(coach);
+  $('exerciseSelect').hidden=false;
+  const oldSettings=$('movement').querySelector('.practice-settings');
+  if(oldSettings){controls.append($('capturePhoto'),$('cameraRequirement'));oldSettings.remove();}
+  const selection=$('exerciseSelect').closest('label');selection.className='movement-choice';controls.after(selection);
+  coach.querySelectorAll('[data-pushup-step]').forEach(button=>button.onclick=()=>drawPushupGuide(button.dataset.pushupStep));
+  $('pushupVariant').onchange=()=>{pushupCounter.reset();pushupPose=null;app.poseReady=false;app.currentAngle=null;app.angleSamples=[];$('startBtn').disabled=true;drawPushupGuide('top');showPushupWaiting('Hold the starting position for this variation.');render();};
+  $('bodySide').addEventListener('change',()=>{pushupCounter.reset();pushupPose=null;showPushupWaiting('Hold the starting position on the selected side.');});
+  drawPushupGuide('top');
+}
+function drawPushupGuide(step) {
+  const wall=pushupVariant()==='wall',knees=pushupVariant()==='knees',bottom=step==='bottom';
+  const shoulder=bottom?[90,91]:[90,54],hip=bottom?[175,104]:[175,82],endpoint=knees?[220,120]:[280,120],elbow=bottom?[55,110]:[82,90];
+  const line=`M${shoulder} L${hip} L${endpoint}${knees?' L265,135':''} M${shoulder} L${elbow} L80,140`;
+  $('pushupIllustration').innerHTML=wall?`<path class="demo-surface" d="M262 10v145M30 150h240"/><circle cx="${bottom?217:183}" cy="28" r="10"/><path d="M${bottom?217:183},40 L${bottom?199:179},90 L170,145 M${bottom?217:183},45 L${bottom?235:220},69 L260,50"/>`:`<path class="demo-surface" d="M20 143h285"/><circle cx="${shoulder[0]-17}" cy="${shoulder[1]-12}" r="10"/><path d="${line}"/>`;
+  $('pushupIllustration').setAttribute('aria-label',`${pushupVariant()} push-up · ${bottom?'lowered':'starting'} position · schematic`);
+  $('pushupVariantCopy').textContent=wall?'Place hands on a stable wall around shoulder level. Keep your trunk steady as you lean in.':knees?'Keep shoulders, hips and knees in line, with knees supported. Extend arms without locking.':'Keep shoulders, hips and ankles in line. Start with arms extended, without locking.';
+  document.querySelectorAll('[data-pushup-step]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.pushupStep===step)));
+}
 function buildAppScreens() {
   const content = document.querySelector('.content');
   const welcome = content.querySelector('.welcome');
@@ -644,10 +790,10 @@ function buildAppScreens() {
   const recent = $('recentSessions');
   const disclaimer = content.querySelector('.footer-disclaimer');
   const screens = [
-    ['home', 'Home', 'Your care at a glance.'],
-    ['move', 'Practice', 'Use your physio’s plan.'],
-    ['checkin', 'Check-in', 'How are you feeling today?'],
-    ['progress', 'Progress', 'Your sessions over time.'],
+    ['home', 'Home', 'Your plan for today.'],
+    ['move', 'Practice', 'Your prescribed movement.'],
+    ['checkin', 'Check-in', 'A quick record of how you feel.'],
+    ['progress', 'Progress', 'Movement over time.'],
     ['visit', 'Visit note', 'A summary to review with your physio.'],
   ].map(([key, title, subtitle]) => {
     const section = document.createElement('section');
@@ -657,18 +803,60 @@ function buildAppScreens() {
   });
   const byName = Object.fromEntries(screens.map((screen) => [screen.dataset.screenView, screen]));
   const homeFocus = document.createElement('section'); homeFocus.className = 'home-focus card';
-  homeFocus.innerHTML = '<div><span class="home-kicker">TODAY</span><h2 id="homeExercise">Choose your movement.</h2><p id="homePlanCopy">Camera optional · follow your plan.</p><button class="primary" type="button" data-open-screen="move">Start practice <span aria-hidden="true">→</span></button></div><div class="home-art" aria-hidden="true"><span>↗</span><i></i><b></b></div>';
+  homeFocus.innerHTML = '<div class="home-focus-copy"><span class="home-kicker">TODAY’S PLAN</span><h2 id="homeExercise">Sit-to-stand</h2><p id="homePlanCopy">2 sets · 8 reps · camera optional</p><div class="home-hero-meta"><span>About 8 min</span><span>Alex Chen, PT</span></div><button class="primary" type="button" data-open-screen="move">Begin session <span aria-hidden="true">→</span></button></div><div class="home-art" aria-hidden="true"><svg viewBox="0 0 220 220"><path class="art-chair" d="M42 152h39v-59M41 152v31m40-31v31m-40-20h40"/><circle class="art-head" cx="139" cy="57" r="15"/><path class="art-body" d="M135 76l-10 47 34 14m-34-14-32 27m32-27 30 36m-30-36-22 32"/><path class="art-joint" d="M123 123l-9 13m35 1 10-4"/><path class="art-motion" d="M101 67a49 49 0 0 1 76 22"/><path class="art-arrow" d="m171 78 8 12 4-14"/></svg></div>';
   const homeLinks = document.createElement('div'); homeLinks.className = 'home-shortcuts';
-  homeLinks.innerHTML = '<button class="shortcut-card" type="button" data-open-screen="checkin"><span class="shortcut-icon">♡</span><span><b>Check in</b><small>Pain · confidence · notes</small></span><span class="shortcut-arrow">→</span></button><button class="shortcut-card" type="button" data-open-screen="progress"><span class="shortcut-icon">⌁</span><span><b>Progress</b><small>Trend, photos · physio plan</small></span><span class="shortcut-arrow">→</span></button><button class="shortcut-card" type="button" data-open-screen="visit"><span class="shortcut-icon">▤</span><span><b>Visit note</b><small>Make a summary for your physio</small></span><span class="shortcut-arrow">→</span></button>';
-  byName.home.append(welcome, notice, homeFocus, homeLinks);
-  byName.move.append(movement, stats, calibration);
-  byName.checkin.append(checkin, reflection);
-  byName.progress.append(progress, recent);
+  homeLinks.innerHTML = '<div class="journal-list-heading"><span>YOUR NOTES</span><span>Keep track between visits</span></div><button class="shortcut-card" type="button" data-open-screen="checkin"><span class="shortcut-num">01</span><span><b>Check-in</b><small>Pain, confidence and a note for your physio</small></span><span class="shortcut-arrow">↗</span></button><button class="shortcut-card" type="button" data-open-screen="progress"><span class="shortcut-num">02</span><span><b>Progress</b><small>Range, sessions and photos</small></span><span class="shortcut-arrow">↗</span></button><button class="shortcut-card" type="button" data-open-screen="visit"><span class="shortcut-num">03</span><span><b>Visit note</b><small>A summary you can review and share</small></span><span class="shortcut-arrow">↗</span></button>';
+  byName.home.append(welcome, homeFocus, homeLinks);
+  const practiceLayout = document.createElement('div'); practiceLayout.className = 'practice-layout';
+  const practiceAside = document.createElement('aside'); practiceAside.className = 'practice-aside';
+  practiceLayout.append(movement, practiceAside); practiceAside.append(stats, calibration); byName.move.append(practiceLayout);
+  const checkinLayout = document.createElement('div'); checkinLayout.className = 'checkin-layout';
+  checkinLayout.append(checkin, reflection); byName.checkin.append(checkinLayout);
+  const progressLayout = document.createElement('div'); progressLayout.className = 'progress-layout';
+  const progressMain = document.createElement('div'); progressMain.className = 'progress-main';
+  const progressAside = document.createElement('aside'); progressAside.className = 'progress-aside';
+  progressLayout.append(progressMain, progressAside); progressMain.append(progress, recent); byName.progress.append(progressLayout);
   const progressTools = document.createElement('div'); progressTools.className = 'progress-tools';
-  progressTools.innerHTML = `<section class="card panel"><div class="panel-top"><div><h2>My physio plan</h2><p>Scan your paper or enter the goals your physio gave you.</p></div></div><form id="physioPlanForm" class="plan-form"><label>Diagnosis or focus<input id="planDiagnosis" maxlength="120" placeholder="Optional"></label><label>Instructions from your physio<textarea id="planInstructions" maxlength="500" placeholder="Movement, sets, reps, precautions"></textarea></label><div class="plan-grid"><label>Sessions per week<input id="planSessions" type="number" min="0" max="14" placeholder="e.g. 3"></label><label>Reps per session<input id="planReps" type="number" min="0" max="200" placeholder="e.g. 8"></label></div><button class="primary" type="submit">Save plan</button><div class="plan-summary" id="planSummary" aria-live="polite"></div><p class="fine-print">Progress is compared with the targets you enter. Follow your physio’s advice; this app does not interpret diagnoses.</p></form><div class="upload-row"><label class="secondary upload-button" for="diagnosisFile">Scan printed paper</label><input id="diagnosisFile" type="file" accept="application/pdf,image/*" hidden><span class="upload-hint">Printed text works best · handwriting may be unreadable · scan stays on this device</span></div><div id="scanStatus" class="scan-status" role="status" aria-live="polite"></div><details id="scanReview" class="scan-review" hidden><summary>Review text found on paper</summary><textarea id="scanText" readonly></textarea><button type="button" id="applyScan" class="secondary">Fill plan fields from paper</button></details><div id="documentList" class="media-list"></div></section><section class="card panel"><div class="panel-top"><div><h2>Session photos</h2><p>Take optional snapshots during practice, then review them here.</p></div><span class="optional">Private</span></div><p class="fine-print">Photos are only taken when you press Capture photo. Live video is not saved.</p><div id="photoGallery" class="photo-gallery"><div class="media-empty">No session photos yet.</div></div></section>`;
-  byName.progress.append(progressTools);
+  progressTools.innerHTML = `<section class="card panel"><div class="panel-top"><div><h2>My physio plan</h2><p>Scan your paper or enter the goals your physio gave you.</p></div></div><form id="physioPlanForm" class="plan-form"><label>Diagnosis or focus<input id="planDiagnosis" maxlength="120" placeholder="Optional"></label><label>Instructions from your physio<textarea id="planInstructions" maxlength="500" placeholder="Movement, sets, reps, precautions"></textarea></label><div class="plan-grid"><label>Sessions per week<input id="planSessions" type="number" min="0" max="14" placeholder="e.g. 3"></label><label>Reps per session<input id="planReps" type="number" min="0" max="200" placeholder="e.g. 8"></label></div><button class="primary" type="submit">Save plan</button><div class="plan-summary" id="planSummary" aria-live="polite"></div><p class="fine-print">Progress is compared with the targets you enter. Follow your physio’s advice; this app does not interpret diagnoses.</p></form><div class="upload-row"><label class="secondary upload-button" for="diagnosisFile">Scan paper</label><input id="diagnosisFile" type="file" accept="application/pdf,image/*" hidden><span class="upload-hint">PDF or photo · scan runs on this device</span></div><div id="scanStatus" class="scan-status" role="status" aria-live="polite"></div><details id="scanReview" class="scan-review" hidden><summary>Review text found on paper</summary><textarea id="scanText" readonly></textarea><button type="button" id="applyScan" class="secondary">Fill plan fields from paper</button></details><div id="documentList" class="media-list"></div></section><section class="card panel"><div class="panel-top"><div><h2>Session photos</h2><p>Take optional snapshots during practice, then review them here.</p></div><span class="optional">Private</span></div><p class="fine-print">Photos are only taken when you press Capture photo. Live video is not saved.</p><div id="photoGallery" class="photo-gallery"><div class="media-empty">No session photos yet.</div></div></section>`;
+  progressAside.append(progressTools);
   const capture = document.createElement('button'); capture.type = 'button'; capture.className = 'secondary'; capture.id = 'capturePhoto'; capture.textContent = 'Capture photo'; capture.disabled = true; capture.title = 'Start a camera session to capture a photo.';
   $('cameraRequirement').before(capture);
+  // Keep the primary session actions visible; reveal device choices on demand.
+  const cameraOptions = document.createElement('details'); cameraOptions.className = 'camera-options';
+  cameraOptions.innerHTML = '<summary>Movement & camera settings</summary><div class="camera-option-fields"></div>';
+  const optionFields = cameraOptions.querySelector('div');
+  [['exerciseSelect','Movement'],['bodySide','Body side'],['cameraSelect','Camera']].forEach(([id,label]) => {
+    const field = document.createElement('label'); field.textContent = label; field.append($(id)); optionFields.append(field);
+  });
+  optionFields.append($('switchCamera')); $('movement').append(cameraOptions);
+  buildPushupCoach();
+  // Progress has three separate workspaces, rather than a chart beside a long form.
+  const progressNav = document.createElement('nav'); progressNav.className = 'record-nav'; progressNav.setAttribute('aria-label','Progress views');
+  progressNav.innerHTML = '<button type="button" aria-pressed="true" aria-controls="record-overview" data-record-view="overview">Overview</button><button type="button" aria-pressed="false" aria-controls="record-photos" data-record-view="photos">Session photos</button><button type="button" aria-pressed="false" aria-controls="record-plan" data-record-view="plan">Care plan</button>';
+  const overview = document.createElement('section'); overview.id = 'record-overview'; overview.className = 'record-view';
+  const progressTotals = document.createElement('div'); progressTotals.className = 'record-totals'; progressTotals.id = 'recordTotals';
+  const measurement = document.createElement('div'); measurement.className = 'measurement-picker';
+  measurement.innerHTML = '<label for="progressMovement">Movement</label><select id="progressMovement" aria-label="Progress movement">'+$('exerciseSelect').innerHTML+'</select><label for="progressSide">Side</label><select id="progressSide" aria-label="Progress body side">'+$('bodySide').innerHTML+'</select>';
+  overview.append(progressTotals, measurement, progressMain);
+  const planView = document.createElement('section'); planView.id = 'record-plan'; planView.className = 'record-view care-plan-view'; planView.hidden = true;
+  const photosView = document.createElement('section'); photosView.id = 'record-photos'; photosView.className = 'record-view'; photosView.hidden = true;
+  const [planPanel, photosPanel] = progressTools.children;
+  planView.append(planPanel); photosView.append(photosPanel);
+  progressLayout.remove(); byName.progress.append(progressNav, overview, photosView, planView);
+  progressNav.querySelectorAll('button').forEach(button => button.addEventListener('click', () => {
+    progressNav.querySelectorAll('button').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    [overview,photosView,planView].forEach(view => { view.hidden = view.id !== `record-${button.dataset.recordView}`; });
+  }));
+  [['progressMovement','exerciseSelect'],['progressSide','bodySide']].forEach(([progressId, practiceId]) => {
+    $(progressId).addEventListener('change', () => { $(practiceId).value = $(progressId).value; $(practiceId).dispatchEvent(new Event('change')); });
+  });
+  const week = document.createElement('section'); week.className = 'week-journal'; week.innerHTML = '<div class="week-heading"><h2>Your week</h2><span id="weekCount"></span></div><div class="week-days" id="weekDays"></div>';
+  byName.home.insertBefore(week,homeLinks);
+  // A consistent stroke icon family replaces platform-dependent text symbols.
+  const navPaths = { home:'M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9', move:'m8 5 4-2 3 4 5 2M12 4l-2 8 5 3 2 6M10 12l-5 8M4 10l5-2', checkin:'M12 20S3 15 3 8a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 7-9 12-9 12Z', progress:'M4 3v17h17M7 14l4-4 4 2 5-7', visit:'M6 3h9l4 4v14H6ZM14 3v5h5M9 12h7M9 16h7' };
+  document.querySelectorAll('.nav button, .mobile-nav button').forEach(button => {
+    const icon = button.querySelector('span'); icon.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${navPaths[button.dataset.screen]}"/></svg>`;
+  });
   const visitGuide = document.createElement('section'); visitGuide.className = 'visit-guide';
   visitGuide.innerHTML = '<div class="visit-guide-icon">✳</div><div><b>Your note stays private.</b><p>Review it, then copy or download to share.</p></div>';
   byName.visit.append(report, visitGuide, disclaimer);
@@ -678,6 +866,7 @@ function buildAppScreens() {
     if (!byName[key]) return;
     if (activeScreen === 'move' && key !== 'move' && app.running) { toast('Finish the active session before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.autoCalibration.active) { toast('Finish calibration before leaving Practice.'); return; }
+    if (activeScreen === 'move' && key !== 'move' && app.countdownActive) cancelCountdown();
     if (activeScreen === 'move' && key !== 'move' && app.stream) {
       app.stream.getTracks().forEach((track) => track.stop()); app.stream = null; cancelAnimationFrame(app.raf); app.raf = 0;
       $('video').srcObject = null; $('video').style.display = 'none'; $('cameraEmpty').style.display = 'grid';
@@ -701,7 +890,26 @@ function buildAppScreens() {
   return { switchTo };
 }
 
+function renderJournalOverview(rows) {
+  if (!$('weekDays')) return;
+  const practice = rows.filter(row => !row.checkin && !row.demo);
+  const now = new Date(); now.setHours(0,0,0,0);
+  let count = 0;
+  $('weekDays').innerHTML = Array.from({length:7}, (_,index) => {
+    const day = new Date(now); day.setDate(day.getDate() - 6 + index);
+    const done = practice.some(row => new Date(row.date).toDateString() === day.toDateString()); if (done) count++;
+    return `<div class="week-day${done?' completed':''}${index===6?' today':''}"><span>${day.toLocaleDateString(undefined,{weekday:'short'})}</span><b>${day.getDate()}</b><span class="day-mark" aria-label="${done?'Practice recorded':'No practice recorded'}">${done?'✓':'—'}</span></div>`;
+  }).join('');
+  $('weekCount').textContent = `${count} practice ${count===1?'day':'days'}`;
+  const pain = [...rows].reverse().find(row => Number.isFinite(row.pain));
+  const confidence = [...rows].reverse().find(row => Number.isFinite(row.confidence));
+  $('recordTotals').innerHTML = `<div><span>Sessions recorded</span><strong>${practice.length}</strong></div><div><span>Latest pain</span><strong>${pain?`${pain.pain}<small> / 10</small>`:'—'}</strong></div><div><span>Latest confidence</span><strong>${confidence?`${confidence.confidence}<small> / 5</small>`:'—'}</strong></div>`;
+  $('progressMovement').value = $('exerciseSelect').value; $('progressSide').value = $('bodySide').value;
+}
+
 const appNavigation = buildAppScreens();
+const requestedMovement=new URLSearchParams(location.search).get('movement');
+if(requestedMovement && movements[requestedMovement]) $('exerciseSelect').value=requestedMovement;
 
 function mediaDb() {
   return new Promise((resolve, reject) => {
@@ -817,7 +1025,7 @@ function openReport() {
   const data = reportData();
   const angleLine = data.latest ? `${data.latest.metric}: ${data.latest.angle}° latest · ${data.avg}° average${data.cal?.targetAngle !== null && data.cal?.targetAngle !== undefined ? ` · goal ${data.cal.targetAngle}°` : ''}` : 'No angle sessions yet.';
   const checkLine = data.latestCheckin ? `Confidence ${data.latestCheckin.confidence ?? '—'}/5 · pain ${data.latestCheckin.pain ?? '—'}/10` : 'No check-in yet.';
-  $('reportBody').innerHTML = `<p>${new Date().toLocaleDateString()} · ${escapeHtml(authUser?.name || 'Jamie Parker')}</p><h3>Movement</h3><p>${escapeHtml(angleLine)}</p><p>${data.scoped.length} sessions · ${escapeHtml($('bodySide').value)} side · ${escapeHtml(activeMovement().view)}</p><h3>Recent practice</h3><ul>${data.practice.length ? data.practice.slice(-3).map((row) => `<li>${escapeHtml(new Date(row.date).toLocaleDateString())} · ${escapeHtml(row.exercise)} · ${row.reps ?? 0} reps${row.angle !== null ? ` · ~${row.angle}°` : ''}</li>`).join('') : '<li>No sessions yet.</li>'}</ul><h3>Check-in</h3><p>${escapeHtml(checkLine)}</p><h3>Notes</h3><ul>${data.notes.length ? data.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join('') : '<li>None yet.</li>'}</ul><h3>Ask your physio</h3><ul><li>Is my camera setup useful?</li><li>Is my goal still right for me?</li></ul><p class="report-foot">Angles are estimates. Review before sharing.</p>`;
+  $('reportBody').innerHTML = `<p>${new Date().toLocaleDateString()} · ${escapeHtml(authUser?.name || 'Jamie Parker')}</p><h3>Movement</h3><p>${escapeHtml(angleLine)}</p><p>${data.scoped.length} sessions · ${escapeHtml($('bodySide').value)} side · ${escapeHtml(activeMovement().view)}</p><h3>Recent practice</h3><ul>${data.practice.length ? data.practice.slice(-3).map((row) => `<li>${escapeHtml(new Date(row.date).toLocaleDateString())} · ${escapeHtml(row.exercise)} · ${row.reps ?? 0} reps${row.angle !== null ? ` · ~${row.angle}°` : ''}${pushupFormText(row)}</li>`).join('') : '<li>No sessions yet.</li>'}</ul><h3>Check-in</h3><p>${escapeHtml(checkLine)}</p><h3>Notes</h3><ul>${data.notes.length ? data.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join('') : '<li>None yet.</li>'}</ul><h3>Ask your physio</h3><ul><li>Is my camera setup useful?</li><li>Is my goal still right for me?</li></ul><p class="report-foot">Angles are estimates. Review before sharing.</p>`;
   $('reportDialog').showModal();
 }
 
@@ -854,95 +1062,62 @@ function setAuthGateBusy(busy) {
   AUTH_BUTTON_IDS.forEach((id) => { $(id).disabled = busy; });
 }
 
-// Only same-site paths are accepted as a place to return to after sign-in.
-function safeReturnTo(value) {
-  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\') ? value : null;
+let authSession = null, authStarting = null;
+function lockAuthGate(locked) {
+  document.documentElement.classList.toggle('auth-enabled',locked);
+  $('authGate').hidden=!locked;
+  document.querySelector('.app').inert=locked;
+  document.querySelector('.mobile-nav').inert=locked;
 }
-
-function friendlyAuthError(code, description) {
-  if (description) return description;
-  if (code === 'access_denied') return 'Sign-in was cancelled or not allowed for this account. Please try again.';
-  return 'We could not sign you in. Please try again.';
-}
-
 async function startAuth0() {
-  const config = window.FORMNOTE_AUTH0_CONFIG || {};
-  if (!config.domain || !config.clientId) return;
-  $('authAction').hidden = false;
-  $('authGate').hidden = false;
-  setAuthGateBusy(true);
-  try {
-    if (!window.auth0?.createAuth0Client) throw new Error('Auth0 could not load. Refresh and check your internet connection.');
-    authClient = await window.auth0.createAuth0Client({
-      domain: config.domain,
-      clientId: config.clientId,
-      // Keep people signed in after a refresh, even in browsers that block the hidden cross-site check.
-      cacheLocation: 'localstorage',
-      authorizationParams: { redirect_uri: window.location.origin },
-    });
-    const params = new URLSearchParams(window.location.search);
-    if (params.has('error')) {
-      // Auth0 sent the person back with a problem (cancelled, blocked, not verified...).
-      setAuthGateStatus(friendlyAuthError(params.get('error'), params.get('error_description')), true);
-      window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
-    } else if (params.has('code') && params.has('state')) {
-      let returnTo = null;
-      try {
-        const result = await authClient.handleRedirectCallback();
-        returnTo = safeReturnTo(result?.appState?.returnTo);
-      } catch (error) {
-        console.error('Auth0 callback failed', error);
-        setAuthGateStatus('We could not finish signing you in. Please try again.', true);
-      }
-      // Always clear the code from the address bar so a refresh does not replay it.
-      window.history.replaceState({}, document.title, returnTo || (window.location.pathname + window.location.hash));
-    }
-    if (!(await authClient.isAuthenticated())) {
-      $('authGate').hidden = false;
-      $('authAction').hidden = true;
-      setAuthGateBusy(false);
-      return;
-    }
-    authUser = await authClient.getUser();
-    activeDataScope = `user-${encodeURIComponent(authUser.sub)}`;
-    clearCheckinAnswers(); companion?.reloadHistory(); carePages?.reload();
-    applyAuthProfile(authUser);
-    $('authAction').textContent = 'Sign out';
-    $('authGate').hidden = true;
-    document.documentElement.classList.remove('auth-enabled');
-    render();
-    renderPlan();
-    renderMedia();
-    if (authUser.email_verified === false) toast('Check your inbox to verify your email address.');
-  } catch (error) {
-    console.error('Auth0 setup failed', error);
-    $('authGate').hidden = false;
-    setAuthGateStatus(error.message || 'Auth0 setup failed. Check the Auth0 settings and refresh.', true);
-  }
+  if(authStarting)return authStarting;
+  lockAuthGate(true);setAuthGateBusy(true);$('authRetry').hidden=true;
+  authStarting=(async()=>{
+    try {
+      const sdk=await loadAuthSdk(document,window);
+      authSession=new AuthSession({config:window.FORMNOTE_AUTH0_CONFIG,origin:location.origin,sdk});
+      authClient=authSession.client;
+      const result=await authSession.initialize(location.href);
+      history.replaceState({},document.title,result.returnTo);
+      if(result.error)setAuthGateStatus(result.error,true);else setAuthGateStatus('');
+      authUser=result.user;
+      if(!authUser){$('authAction').hidden=true;return;}
+      activeDataScope=`user-${encodeURIComponent(authUser.sub)}`;
+      clearCheckinAnswers();companion?.reloadHistory();carePages?.reload();
+      applyAuthProfile(authUser);$('authAction').textContent='Sign out';$('authAction').hidden=false;
+      render();renderPlan();await renderMedia();
+      appNavigation.switchTo(location.hash.slice(1)||'home');lockAuthGate(false);
+    } catch(error) {
+      authSession=null;authClient=null;
+      setAuthGateStatus(error.message||'Sign-in could not load. Please try again.',true);
+      $('authRetry').hidden=false;
+    } finally {setAuthGateBusy(false);authStarting=null;}
+  })();
+  return authStarting;
 }
-
-async function signInWithAuth0(authorizationParams = {}) {
-  if (!authClient) { setAuthGateStatus('Sign-in is still loading. Try again in a moment.', true); return; }
-  setAuthGateBusy(true);
-  try {
-    await authClient.loginWithRedirect({
-      authorizationParams,
-      appState: { returnTo: window.location.pathname + window.location.hash },
-    });
-  } catch (error) {
-    setAuthGateBusy(false);
-    setAuthGateStatus(error.message || 'Could not start sign-in.', true);
-    toast(error.message || 'Could not start sign-in.');
-  }
+async function signInWithAuth0(method='email') {
+  if(!authSession){await startAuth0();if(!authSession)return;}
+  setAuthGateBusy(true);setAuthGateStatus('Opening secure sign-in…');
+  try {await authSession.login(method,location.href);}
+  catch {setAuthGateStatus('Could not open sign-in. Check your connection and try again.',true);}
+  finally {setAuthGateBusy(false);}
 }
-
-$('authGateGoogle').onclick = () => signInWithAuth0({ connection: 'google-oauth2' });
-$('authGateLogin').onclick = () => signInWithAuth0();
-$('authGateSignup').onclick = () => signInWithAuth0({ screen_hint: 'signup' });
-$('authAction').onclick = async () => {
-  if (!authClient) return;
-  if (authUser) await authClient.logout({ logoutParams: { returnTo: window.location.origin } });
-  else await signInWithAuth0();
+$('authRetry').onclick=startAuth0;
+$('authGateGoogle').onclick=()=>signInWithAuth0('google');
+$('authGateLogin').onclick=()=>signInWithAuth0('email');
+$('authGateSignup').onclick=()=>signInWithAuth0('signup');
+$('authAction').onclick=async()=>{
+  if(!authSession)return startAuth0();
+  if(app.running||app.countdownActive||app.autoCalibration.active){toast('Finish the session or calibration before signing out.');return;}
+  $('authAction').disabled=true;
+  try {
+    app.stream?.getTracks().forEach(track=>track.stop());
+    authUser=null;activeDataScope='guest';lockAuthGate(true);$('authAction').hidden=true;
+    await authSession.logout();
+    authUser=null;activeDataScope='guest';lockAuthGate(true);setAuthGateStatus('');
+    $('authAction').hidden=true;
+  } catch {setAuthGateStatus('The sign-out redirect failed. You can sign in again or retry after checking your connection.',true);}
+  finally {$('authAction').disabled=false;}
 };
 companion = createCompanion({
   getScope: () => activeDataScope,
