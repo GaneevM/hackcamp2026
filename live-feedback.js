@@ -7,7 +7,7 @@ export function createLiveFeedback(options = {}) {
   section.id = 'geminiLivePanel';
   section.className = 'gemini-live-panel';
   section.style.cssText='border-top:2px solid #cbd8e2;margin-top:22px;padding-top:20px;font-size:16px;line-height:1.5';
-  section.innerHTML = `<h2>Gemini live companion</h2><label><input type="checkbox" data-live-consent> Share camera snapshots with Gemini during this exercise</label><p>Optional demo feedback. Sends up to one image per second to Google while your session is active. Images are not saved by Physipeak. Feedback can be delayed or mistaken; follow your care plan.</p><button type="button" class="secondary" data-live-reconnect>Connect / reconnect Gemini</button><button type="button" class="secondary" data-live-mic aria-pressed="false">Enable microphone help</button><p>With microphone help on, say “Help me” or ask what to do next after Gemini finishes speaking. Your spoken question is sent to Google; audio is not saved by Physipeak.</p><div data-live-mic-panel hidden><label>Microphone input <meter data-live-mic-level min="0" max="100" value="0" aria-label="Microphone sound level" style="display:block;width:100%;height:28px"></meter></label><p data-live-mic-status>Microphone off.</p></div><p data-live-heard aria-live="polite"></p><p data-live-status role="status">Enable before starting a camera session. Live coaching stops after three minutes.</p>`;
+  section.innerHTML = `<h2>Gemini live companion</h2><label><input type="checkbox" data-live-consent> Share camera snapshots with Gemini during this exercise</label><p>Optional demo feedback. Sends up to one image per second to Google while your session is active. Images are not saved by Physipeak. Feedback can be delayed or mistaken; follow your care plan.</p><button type="button" class="secondary" data-live-reconnect>Connect / reconnect Gemini</button><button type="button" class="secondary" data-live-mic aria-pressed="false">Enable microphone help</button><p>With microphone help on, say “Help me” or ask what to do next after Gemini finishes speaking. Your spoken question is sent to Google; audio is not saved by Physipeak.</p><div data-live-mic-panel><label>Microphone input <meter data-live-mic-level min="0" max="100" value="0" aria-label="Microphone sound level" style="display:block;width:100%;height:28px"></meter></label><p data-live-mic-status>Microphone off.</p></div><p data-live-heard aria-live="polite"></p><p data-live-status role="status">Enable before starting a camera session. Live coaching stops after three minutes.</p>`;
   const host = document.querySelector('.session-companion');
   if (!host) throw new Error('Voice controls must be mounted before Gemini Live.');
   host.querySelector('.companion-toolbar').after(section);
@@ -21,7 +21,7 @@ export function createLiveFeedback(options = {}) {
   let recognized = ''; 
   function sendRealtime(value) { if (ready && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({realtimeInput:value})); }
   const microphone = createLiveMicrophone({
-    allowed: () => ready && Boolean(options.getSession?.()) && !awaitingTurnComplete && sources.size === 0 && !document.hidden,
+    allowed: () => ready && Boolean(options.getSession?.()) && !document.hidden && !awaitingTurnComplete && sources.size === 0 && !document.hidden,
     begin: () => { recognized = ''; heard.textContent = ''; awaitingTurnComplete = true; sendRealtime({activityStart:{}}); label.textContent = 'Listening to your question…'; },
     audio: bytes => sendRealtime({audio:{mimeType:'audio/pcm;rate=16000',data:btoa(String.fromCharCode(...bytes))}}),
     finish: () => { if(ready) { sendRealtime({activityEnd:{}}); label.textContent = 'Gemini is considering your question…'; } },
@@ -29,8 +29,8 @@ export function createLiveFeedback(options = {}) {
       micLevel.value = Math.min(100,Math.round(rms*1000));
       micStatus.textContent = paused ? 'Microphone paused while Gemini finishes its reply.' : speaking ? 'Speech detected · sending your question to Gemini…' : rms >= .025 ? 'Sound detected · keep speaking.' : 'Listening · speak clearly and watch the microphone bar.';
     },
-    state: active => { micPanel.hidden = !active; micLevel.value = 0; micStatus.textContent = active ? 'Microphone enabled · say “Help me”.' : 'Microphone off.'; micButton.setAttribute('aria-pressed',String(active)); micButton.textContent = active ? 'Microphone help on · turn off' : 'Enable microphone help'; },
-    error: message => { label.textContent = message; }
+    state: active => { micPanel.hidden = false; micLevel.value = 0; micStatus.textContent = active ? 'Microphone enabled · say “Help me”.' : 'Microphone off.'; micButton.setAttribute('aria-pressed',String(active)); micButton.textContent = active ? 'Microphone help on · turn off' : 'Enable microphone help'; },
+    error: message => { micStatus.textContent = message; label.textContent = message; }
   });
   micButton.onclick = () => {
     if(microphone.active) { microphone.stop(); return; }
@@ -77,9 +77,18 @@ export function createLiveFeedback(options = {}) {
     }
   }
   consent.onchange = () => { if (!consent.checked) stop('Camera sharing disabled.'); else reconnect(); };
-  function reconnect(){const session=options.getSession?.();if(!session){label.textContent='Start a camera exercise session first. Gemini will connect automatically.';return;}if(!consent.checked){label.textContent='Check camera sharing before connecting.';return;}api.start(session);}
+  function reconnect(){if(socket && (socket.readyState===WebSocket.OPEN||socket.readyState===WebSocket.CONNECTING)){label.textContent=ready?'Gemini is already connected · no new connection needed.':'Gemini is connecting…';return;}const session=options.getSession?.();if(!session){label.textContent='Start a camera exercise session first. Gemini will connect automatically.';return;}if(!consent.checked){label.textContent='Check camera sharing before connecting.';return;}api.start(session);}
   section.querySelector('[data-live-reconnect]').onclick=reconnect;
-  document.addEventListener('visibilitychange', () => { if (document.hidden) stop('Gemini paused when you switched tabs. Return here and press Reconnect Gemini.'); });
+  document.addEventListener('visibilitychange', () => {
+    if(document.hidden) {
+      microphone.stop();
+      context?.suspend().catch(()=>{});
+      if(ready)label.textContent='Sharing paused while this tab is hidden. Your existing Gemini connection stays open within its three-minute limit.';
+    } else if(ready) {
+      context?.resume().catch(()=>{label.textContent='Press a voice control to resume audio.';});
+      label.textContent='Gemini resumed on the same connection. Enable microphone help again when ready.';
+    }
+  });
   window.addEventListener('pagehide', () => stop());
   const api = {
     async start(value) {

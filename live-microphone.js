@@ -68,7 +68,11 @@ export function createLiveMicrophone(options) {
         if (transition === 'end') { chunks = []; options.finish(); }
       };
       options.state(true);
-    } catch { if(version === generation) { stop(); options.error('Microphone unavailable. Allow microphone access, then try again.'); } }
+    } catch (error) { if(version === generation) {
+      stop();
+      const messages={NotAllowedError:'Microphone permission blocked. Allow microphone access in Chrome site settings.',NotFoundError:'No microphone found. Connect a microphone and choose it in Chrome settings.',NotReadableError:'Microphone is busy or unavailable. Check your Windows input device and close other recording apps.',NotSupportedError:'This browser could not open the microphone audio format. Check your selected input device.'};
+      options.error(messages[error.name] || 'Microphone could not start ('+(error.name||'unknown error')+'). Check the selected input device.');
+    } }
   }
   return {start,stop,get active(){return Boolean(stream);},get speaking(){return gate.active;},get pending(){return gate.voiced > 0;}};
 }
