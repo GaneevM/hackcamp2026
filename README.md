@@ -22,7 +22,7 @@ Open <http://localhost:3001>. Use Node.js 24 or newer. Keep existing server/.env
 
 ## Sign-in (Auth0)
 
-Formnote's sign-in screen offers **Continue with Google**, **Sign in with email** (email and password) and **Create an account**. Auth0 stores the passwords and runs the Google handshake, so this app never sees either. Until Auth0 is configured (steps below) the site shows no sign-in screen and the app is open.
+Formnote's sign-in screen offers **Continue with Google**, **Sign in with email** (email and password) and **Create an account**. Auth0 manages credentials. Missing configuration keeps the app gated with an actionable error. See [authentication and deployment setup](AUTH-DEPLOYMENT.md) for verified settings, owner steps and test limitations.
 
 ### 1. Create the Auth0 application
 
@@ -59,7 +59,7 @@ Formnote's sign-in screen offers **Continue with Google**, **Sign in with email*
 
 ## Deploy to the existing Cloudflare Worker
 
-`wrangler.jsonc` publishes the generated `dist/` bundle to the existing Worker `steep-bush-dac6`. The GitHub Actions workflow deploys on changes to the root app files in `main` and can also be started manually. It skips deployment with a notice until the Cloudflare secrets below have been added. Auth0 is optional.
+`wrangler.jsonc` publishes the generated `dist/` bundle to the existing Worker `steep-bush-dac6`. The GitHub Actions workflow deploys on changes to the root app files in `main` and can also be started manually. Missing Cloudflare secrets fail the deployment. Auth0 configuration is validated before publishing. See [the deployment checklist](AUTH-DEPLOYMENT.md).
 
 In **GitHub → Settings → Secrets and variables → Actions**, add:
 
@@ -73,7 +73,7 @@ In **GitHub → Settings → Secrets and variables → Actions**, add:
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN` — a Cloudflare API token with Workers deployment permissions, scoped to this account
 
-The workflow writes the public Auth0 values into a generated root `auth0-config.js`, copies only the explicitly listed frontend assets into `dist/`, then runs Wrangler. The Cloudflare token stays in GitHub Secrets and is never written to the repository.
+The workflow generates public Auth0 configuration in `dist/`, includes transitive frontend modules, runs Wrangler, then verifies the live commit and asset hashes. The Cloudflare token stays in GitHub Secrets and is never written to the repository.
 
 ## Prototype limits
 
