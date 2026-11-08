@@ -5,12 +5,14 @@ import { WaveCounter } from './session-metrics.js';
 const waveCounter = new WaveCounter();
 import { assessPushup, PushupCounter } from './pushup.mjs';
 import { MovementCounter } from './movement-counter.mjs';
+import { fitPointerMap, mapFingerToScreen, isIndexPointing } from './air-pointer.mjs';
 const pushupCounter = new PushupCounter();
 const movementCounter = new MovementCounter();
 let pushupPose = null, pushupUiAt = 0;
 const $ = (id) => document.getElementById(id);
 const SESSION_KEY = 'formnote_sessions_v2';
 const CALIBRATION_KEY = 'formnote_angle_calibration_v1';
+const AIR_POINTER_KEY = 'formnote_air_pointer_calibration_v1';
 const PLAN_KEY = 'formnote_physio_plan_v1';
 const MEDIA_DB = 'formnote_media_v1';
 let activeDataScope = 'guest';
@@ -60,6 +62,8 @@ const app = {
 };
 
 let companion = null, carePages = null;
+let visionRuntime = null, visionFiles = null, handLandmarker = null;
+const airPointer = { enabled:false, map:null, lastDetectionAt:0, current:null, candidate:null, dwellAt:null, mustRelease:false, releaseAt:null, calibration:null };
 
 const readSessions = () => { try { return JSON.parse(localStorage.getItem(scopedStorageKey(SESSION_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(SESSION_KEY) : null) ?? '[]'); } catch { return []; } };
 const saveSessions = (rows) => localStorage.setItem(scopedStorageKey(SESSION_KEY), JSON.stringify(rows));
@@ -217,16 +221,157 @@ async function loadModel() {
   if (app.landmarker) return app.landmarker;
   $('trackingTitle').textContent = 'Loading tracker';
   $('trackingCopy').textContent = 'First load may take a moment.';
-  const vision = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14');
-  const files = await vision.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+  if (!visionRuntime) visionRuntime = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14');
+  if (!visionFiles) visionFiles = await visionRuntime.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
   const model = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
   try {
-    app.landmarker = await vision.PoseLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: model, delegate: 'GPU' }, runningMode: 'VIDEO', numPoses: 1 });
+    app.landmarker = await visionRuntime.PoseLandmarker.createFromOptions(visionFiles, { baseOptions: { modelAssetPath: model, delegate: 'GPU' }, runningMode: 'VIDEO', numPoses: 1 });
   } catch {
-    app.landmarker = await vision.PoseLandmarker.createFromOptions(files, { baseOptions: { modelAssetPath: model, delegate: 'CPU' }, runningMode: 'VIDEO', numPoses: 1 });
+    app.landmarker = await visionRuntime.PoseLandmarker.createFromOptions(visionFiles, { baseOptions: { modelAssetPath: model, delegate: 'CPU' }, runningMode: 'VIDEO', numPoses: 1 });
   }
   return app.landmarker;
 }
+
+async function loadHandTracker() {
+  if (handLandmarker) return handLandmarker;
+  await loadModel();
+  const model='https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+  try { handLandmarker=await visionRuntime.HandLandmarker.createFromOptions(visionFiles,{baseOptions:{modelAssetPath:model,delegate:'GPU'},runningMode:'VIDEO',numHands:1}); }
+  catch { handLandmarker=await visionRuntime.HandLandmarker.createFromOptions(visionFiles,{baseOptions:{modelAssetPath:model,delegate:'CPU'},runningMode:'VIDEO',numHands:1}); }
+  return handLandmarker;
+}
+
+function pointerCalibrationTargets() {
+  const height=window.innerHeight||720,panel=$('pointerCalibration').querySelector('.pointer-calibration-panel').getBoundingClientRect();
+  const nav=document.querySelector('.mobile-nav')?.getBoundingClientRect().height||0;
+  const top=Math.min(.48,Math.max(.2,(panel.bottom+34)/height));
+  const bottom=Math.max(top+.16,Math.min(.88,(height-nav-38)/height));
+  return [{x:.12,y:top},{x:.88,y:top},{x:.88,y:bottom},{x:.12,y:bottom},{x:.5,y:(top+bottom)/2}];
+}
+function pointerFingerprint() {
+  const track=app.stream?.getVideoTracks()[0],settings=track?.getSettings?.();
+  return `${app.facing}:${settings?.deviceId||'camera'}:${$('video').videoWidth||0}x${$('video').videoHeight||0}`;
+}
+function pointerStatus(message) { $('airPointerStatus').textContent=message; }
+function pointerToast(message) {
+  const node=$('airPointerToast');node.textContent=message;node.hidden=false;
+  clearTimeout(pointerToast.timer);pointerToast.timer=setTimeout(()=>{node.hidden=true;},2500);
+}
+function resetPointerDwell() {
+  airPointer.candidate?.classList.remove('air-hover-target');
+  airPointer.candidate=null;airPointer.dwellAt=null;
+  $('airPointerCursor').style.setProperty('--dwell','0%');
+}
+function setPointerEnabled(enabled) {
+  airPointer.enabled=enabled;
+  if(!enabled){airPointer.mustRelease=false;airPointer.releaseAt=null;}
+  $('airPointerCursor').hidden=!enabled;
+  $('airPointerToggle').textContent=enabled?'Turn off air pointer':'Enable air pointer';
+  $('airPointerToggle').setAttribute('aria-pressed',String(enabled));
+  $('airPointerCalibrate').disabled=!app.stream||!handLandmarker;
+  if(!enabled){resetPointerDwell();$('airPointerToast').hidden=true;}
+}
+function readPointerCalibration() {
+  try {
+    const saved=JSON.parse(localStorage.getItem(scopedStorageKey(AIR_POINTER_KEY))||'null');
+    const map=saved?.map;
+    return saved?.fingerprint===pointerFingerprint()&&[map?.x,map?.y].every(axis=>Array.isArray(axis)&&axis.length===3&&axis.every(Number.isFinite))?map:null;
+  } catch { return null; }
+}
+function showPointerCalibration() {
+  $('pointerCalibration').hidden=false;$('airPointerCursor').hidden=true;
+  airPointer.calibration={index:0,pairs:[],samples:[],startedAt:null,lastSampleAt:0,targets:pointerCalibrationTargets()};
+  $('airPointerCalibrate').disabled=true;
+  placePointerCalibrationTarget();
+  pointerStatus('Point at the on-screen dots to calibrate.');
+}
+function placePointerCalibrationTarget() {
+  const state=airPointer.calibration;if(!state)return;
+  const target=state.targets[state.index];
+  $('pointerCalibrationTarget').style.left=`${target.x*100}%`;
+  $('pointerCalibrationTarget').style.top=`${target.y*100}%`;
+  $('pointerCalibrationStep').textContent=`Target ${state.index+1} of ${state.targets.length}`;
+  state.samples=[];state.startedAt=null;state.lastSampleAt=0;
+}
+function cancelPointerCalibration() {
+  airPointer.calibration=null;$('pointerCalibration').hidden=true;
+  $('airPointerCalibrate').disabled=!app.stream||!handLandmarker;
+  setPointerEnabled(false);pointerStatus('Calibration cancelled.');
+}
+function finishPointerCalibration(state) {
+  let map;
+  try { map=fitPointerMap(state.pairs); }
+  catch { pointerToast('Calibration did not hold together. Try again.');state.index=0;state.pairs=[];placePointerCalibrationTarget();return; }
+  const errors=state.pairs.map(pair=>{const p=mapFingerToScreen(map,pair.camera);return Math.hypot(p.x-pair.screen.x,p.y-pair.screen.y);});
+  if(errors.reduce((sum,error)=>sum+error,0)/errors.length>.16){pointerToast('The points were inconsistent. Keep still and recalibrate.');state.index=0;state.pairs=[];placePointerCalibrationTarget();return;}
+  try { localStorage.setItem(scopedStorageKey(AIR_POINTER_KEY),JSON.stringify({map,fingerprint:pointerFingerprint(),savedAt:new Date().toISOString()})); }
+  catch { pointerToast('Could not save calibration in this browser.');cancelPointerCalibration();return; }
+  airPointer.map=map;airPointer.calibration=null;$('pointerCalibration').hidden=true;airPointer.mustRelease=true;airPointer.releaseAt=null;setPointerEnabled(true);
+  $('airPointerCalibrate').disabled=false;
+  pointerStatus('Point at Start or Finish & save; hold until the ring completes.');
+  pointerToast('Air pointer calibrated on this device.');
+}
+function processPointerHand(result,now) {
+  const hand=result?.landmarks?.[0];
+  if(!hand||!isIndexPointing(hand)){
+    $('airPointerCursor').hidden=true;
+    resetPointerDwell();
+    if(airPointer.calibration){airPointer.calibration.samples=[];airPointer.calibration.startedAt=null;pointerStatus('Point with your index finger; curl the other fingers.');}
+    else if(airPointer.mustRelease){if(airPointer.releaseAt===null)airPointer.releaseAt=now;if(now-airPointer.releaseAt>=450){airPointer.mustRelease=false;airPointer.releaseAt=null;pointerStatus('Pointer ready. Point at Start or Finish & save.');}else pointerStatus('Release your index finger to arm another action.');}
+    else if(airPointer.enabled)pointerStatus(hand?'Extend your index finger and curl the others.':'Show one hand to the camera.');
+    return;
+  }
+  const point={x:hand[8].x,y:hand[8].y};
+  if(airPointer.calibration){
+    const state=airPointer.calibration;
+    if(state.samples.length&&Math.hypot(point.x-state.samples[0].x,point.y-state.samples[0].y)>.025){state.samples=[];state.startedAt=null;}
+    if(state.startedAt===null)state.startedAt=now;
+    if(now-state.lastSampleAt>=55){state.samples.push(point);state.lastSampleAt=now;}
+    const steady=Math.max(0,now-state.startedAt);
+    pointerStatus(`Hold on target ${state.index+1} · ${Math.min(100,Math.round(steady/7.5))}%`);
+    if(steady>=750&&state.samples.length>=8){
+      const camera={x:state.samples.reduce((sum,p)=>sum+p.x,0)/state.samples.length,y:state.samples.reduce((sum,p)=>sum+p.y,0)/state.samples.length};
+      state.pairs.push({camera,screen:state.targets[state.index]});
+      state.index++;
+      if(state.index>=state.targets.length)finishPointerCalibration(state);else placePointerCalibrationTarget();
+    }
+    return;
+  }
+  if(!airPointer.enabled)return;
+  const expected=readPointerCalibration();
+  if(!expected){airPointer.map=null;resetPointerDwell();pointerStatus('Camera or distance changed. Recalibrate the pointer.');return;}
+  airPointer.map=expected;
+  const mapped=mapFingerToScreen(airPointer.map,point);if(!mapped)return;
+  const x=mapped.x*window.innerWidth,y=mapped.y*window.innerHeight;
+  const cursor=$('airPointerCursor');cursor.hidden=false;cursor.style.left=`${x}px`;cursor.style.top=`${y}px`;
+  if(airPointer.mustRelease){airPointer.releaseAt=null;pointerStatus('Release your pointing finger to arm another action.');return;}
+  const onPractice=document.querySelector('.app-screen[data-screen-view="move"]')?.classList.contains('screen-active');
+  const hit=onPractice&&!document.querySelector('dialog[open]')?document.elementFromPoint(x,y)?.closest('#startBtn,#stageStop'):null;
+  const target=hit&&!hit.disabled&&hit.getClientRects().length?hit:null;
+  if(!target){resetPointerDwell();pointerStatus('Point at Start or Finish & save; other controls stay manual.');return;}
+  if(airPointer.candidate!==target){resetPointerDwell();airPointer.candidate=target;airPointer.dwellAt=now;target.classList.add('air-hover-target');}
+  const duration=target.id==='stageStop'?2200:1600,progress=Math.min(1,(now-airPointer.dwellAt)/duration);
+  cursor.style.setProperty('--dwell',`${progress*100}%`);
+  pointerStatus(`${target.id==='stageStop'?'Finish & save':'Start session'} · hold ${Math.max(0,Math.ceil((duration-(now-airPointer.dwellAt))/1000))}s`);
+  if(progress>=1){const label=target.id==='stageStop'?'Finish & save':'Start session';target.click();airPointer.mustRelease=true;airPointer.releaseAt=null;resetPointerDwell();pointerStatus('Action activated. Release your index finger to use the pointer again.');pointerToast(`${label} activated.`);}
+}
+async function toggleAirPointer() {
+  if(airPointer.enabled){setPointerEnabled(false);pointerStatus('Air pointer off.');return;}
+  $('airPointerToggle').disabled=true;pointerStatus('Starting the camera and hand tracker…');
+  try {
+    if(!app.stream)await startCamera();
+    if(!app.stream)return;
+    await loadHandTracker();
+    $('airPointerCalibrate').disabled=false;
+    const map=readPointerCalibration();
+    if(map){airPointer.map=map;airPointer.mustRelease=true;airPointer.releaseAt=null;setPointerEnabled(true);pointerStatus('Release your index finger to arm the pointer.');}
+    else showPointerCalibration();
+  } catch(error){pointerStatus(`Air pointer could not start: ${error.message||'check the camera and try again.'}`);setPointerEnabled(false);}
+  finally{$('airPointerToggle').disabled=false;}
+}
+$('airPointerToggle').addEventListener('click',toggleAirPointer);
+$('airPointerCalibrate').addEventListener('click',()=>{if(handLandmarker&&app.stream)showPointerCalibration();});
+$('pointerCalibrationCancel').addEventListener('click',cancelPointerCalibration);
 
 async function enumerateCameras() {
   if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -241,7 +386,7 @@ async function enumerateCameras() {
 async function startCamera(deviceId) {
   if (!navigator.mediaDevices?.getUserMedia) { toast('Use a modern browser on localhost or HTTPS.'); return; }
   try {
-    app.stream?.getTracks().forEach((track) => track.stop());
+    app.stream?.getTracks().forEach((track) => track.stop());app.stream=null;
     const video = deviceId ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } } : { facingMode: { ideal: app.facing }, width: { ideal: 1280 }, height: { ideal: 720 } };
     app.stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
     $('video').srcObject = app.stream; $('video').style.display = 'block'; await $('video').play(); $('cameraEmpty').style.display = 'none';
@@ -251,6 +396,7 @@ async function startCamera(deviceId) {
     toast('Camera ready. Step into view.');
     if (!app.raf) monitor();
   } catch (error) {
+    app.stream?.getTracks().forEach((track)=>track.stop());app.stream=null;
     const message = error.name === 'NotAllowedError' ? 'Allow camera access in browser settings.' : error.name === 'NotFoundError' ? 'No camera found. Try manual logging.' : 'Camera unavailable. Close other camera apps and retry.';
     cameraState('Camera unavailable', 'bad', message); $('trackingTitle').textContent = 'Camera unavailable'; $('trackingCopy').textContent = message; toast(message);
   }
@@ -337,7 +483,8 @@ function monitor() {
   if (!app.stream || $('video').readyState < 2) { app.raf = requestAnimationFrame(monitor); return; }
   if (app.landmarker) {
     try {
-      const result = app.landmarker.detectForVideo($('video'), performance.now());
+      const frameTime=performance.now();
+      const result = app.landmarker.detectForVideo($('video'), frameTime);
       const landmarks = result.landmarks?.[0]; const world = result.worldLandmarks?.[0];
       drawPose(landmarks);
       if (landmarks) {
@@ -371,6 +518,10 @@ function monitor() {
         else if (app.running && !app.manual && $('exerciseSelect').value !== 'pushup' && $('exerciseSelect').value !== 'wave') movementCounter.interrupt();
       } else { if($('exerciseSelect').value==='pushup'){pushupCounter.pause();showPushupWaiting('Step into view.');} if($('exerciseSelect').value!=='pushup'&&$('exerciseSelect').value!=='wave')movementCounter.interrupt(); app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
       if (app.running && !app.manual) companion?.observe({ ready: app.poseReady, angle: app.currentAngle, reps: app.reps, phase: app.phase });
+      if(handLandmarker&&(airPointer.enabled||airPointer.calibration)&&frameTime-airPointer.lastDetectionAt>=80){
+        airPointer.lastDetectionAt=frameTime;
+        processPointerHand(handLandmarker.detectForVideo($('video'),frameTime),frameTime);
+      }
     } catch (error) { console.warn('Pose estimate skipped', error); }
   }
   app.raf = requestAnimationFrame(monitor);
@@ -452,6 +603,7 @@ function beginSession(manual = false) {
   const target = $('exerciseSelect').value === 'wave' ? 0 : Number(readPlan().reps);
   $('repGoal').textContent = Number.isInteger(target) && target > 0 ? '0 / ' + target + ' session goal' : 'One comfortable rep at a time';
   if (manual) {
+    setPointerEnabled(false);if(airPointer.calibration)cancelPointerCalibration();
     $('cameraEmpty').style.display = 'grid'; $('video').style.display = 'none'; app.stream?.getTracks().forEach((track) => track.stop()); app.stream = null;
     $('overlay').getContext('2d').clearRect(0, 0, $('overlay').width, $('overlay').height); $('manualCounter').style.display = 'flex';
     $('setupTitle').textContent = 'Manual session'; $('setupCopy').textContent = 'Use Add rep below to record each completed repetition.';
@@ -934,6 +1086,7 @@ function buildAppScreens() {
     if (activeScreen === 'move' && key !== 'move' && app.autoCalibration.active) { toast('Finish calibration before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.countdownActive) cancelCountdown();
     if (activeScreen === 'move' && key !== 'move' && app.stream) {
+      setPointerEnabled(false);if(airPointer.calibration)cancelPointerCalibration();
       app.stream.getTracks().forEach((track) => track.stop()); app.stream = null; cancelAnimationFrame(app.raf); app.raf = 0;
       $('video').srcObject = null; $('video').style.display = 'none'; $('cameraEmpty').style.display = 'grid';
       $('trackingStatus').classList.remove('show'); cameraState('Camera off', 'neutral', 'Allow camera to check framing.', '0 joints');
@@ -1177,6 +1330,7 @@ $('authAction').onclick=async()=>{
   if(app.running||app.countdownActive||app.autoCalibration.active){toast('Finish the session or calibration before signing out.');return;}
   $('authAction').disabled=true;
   try {
+    setPointerEnabled(false);if(airPointer.calibration)cancelPointerCalibration();
     app.stream?.getTracks().forEach(track=>track.stop());
     authUser=null;activeDataScope='guest';lockAuthGate(true);$('authAction').hidden=true;
     await authSession.logout();
