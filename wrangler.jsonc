@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "steep-bush-dac6",
+  "compatibility_date": "2026-11-07",
+  "assets": {
+    "directory": "./frontend",
+    "not_found_handling": "single-page-application"
+  }
+}
