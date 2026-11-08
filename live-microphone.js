@@ -51,11 +51,13 @@ export function createLiveMicrophone(options) {
       silent = context.createGain(); silent.gain.value = 0;
       input.connect(processor); processor.connect(silent); silent.connect(context.destination);
       processor.onaudioprocess = event => {
-        if (!options.allowed() && !gate.active) { gate.reset(); chunks = []; return; }
         const samples = event.inputBuffer.getChannelData(0);
         let energy = 0; for (const sample of samples) energy += sample * sample;
+        const rms = Math.sqrt(energy / samples.length), allowed = options.allowed();
+        options.level?.({rms,paused:!allowed && !gate.active,speaking:gate.active});
+        if (!allowed && !gate.active) { gate.reset(); chunks = []; return; }
         const bytes = pcm16(samples, context.sampleRate);
-        const transition = gate.update(Math.sqrt(energy / samples.length), samples.length / context.sampleRate * 1000);
+        const transition = gate.update(rms, samples.length / context.sampleRate * 1000);
         if (transition === 'start') {
           options.begin();
           for (const chunk of chunks) options.audio(chunk);

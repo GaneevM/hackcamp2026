@@ -14,7 +14,8 @@ async function smoke() {
   for(const [file,hash] of Object.entries(expected.assets)) {
     if(file==='_headers')continue;
     const response=await get(file),body=Buffer.from(await response.arrayBuffer());
-    if(crypto.createHash('sha256').update(body).digest('hex')!==hash)throw new Error(`${file}: live asset is stale or incompatible.`);
+    // The API Worker generates sign-in config with its audience at runtime; validate its public settings below.
+    if(file!=='auth0-config.js'&&crypto.createHash('sha256').update(body).digest('hex')!==hash)throw new Error(`${file}: live asset is stale or incompatible.`);
     if(/\.(?:m?js)$/.test(file)&&!/javascript/.test(response.headers.get('content-type')||''))throw new Error(`${file}: incorrect script MIME type.`);
     if(['index.html','auth0-config.js','app.js'].includes(file)&&!/(no-cache|no-store|max-age=0)/.test(response.headers.get('cache-control')||''))throw new Error(`${file}: missing revalidation policy.`);
     if(file==='auth0-config.js'&&JSON.stringify(resolveConfig(body.toString()))!==JSON.stringify(expected.auth))throw new Error('Live Auth0 config differs from the build.');
