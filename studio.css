@@ -90,6 +90,9 @@ button:disabled { cursor:not-allowed; }
 .camera-options summary { padding:14px 0; font-size:13px; color:#405049; cursor:pointer; }
 .camera-option-fields { display:grid; grid-template-columns:1fr 1fr; align-items:end; gap:16px; padding:6px 0 20px; }
 .camera-option-fields label { display:grid; gap:7px; font-size:12px; color:#58645c; }
+.camera-option-fields .controls-note { display:block; grid-column:1/-1; color:var(--muted); font-size:12px; }
+.camera-option-fields #airPointerToggle[aria-pressed="true"] { background:#dcefe3; color:#194e3c; }
+.session-actions #enableCamera[aria-pressed="true"] { background:#f0f3f0; color:#34453d; }
 .camera-device { width:100%; min-height:44px; font-size:13px; }
 .stat { padding:18px 0; }
 .stat-label { font-size:10px; color:#58645c; }
@@ -251,6 +254,8 @@ button:disabled { cursor:not-allowed; }
   .photo-gallery { grid-template-columns:1fr 1fr; gap:14px; }
   .report-card { padding:22px 18px; } .report-name { font-size:22px; }
   .calibration-fields { grid-template-columns:minmax(0,1fr); }
+  .camera-option-fields { grid-template-columns:minmax(0,1fr); gap:11px; }
+  .camera-option-fields .controls-note { grid-column:1; }
   .dialog-actions { flex-wrap:wrap; } .camera-meta { max-width:45%; text-align:right; }
 }
 @media(prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } *,*::before,*::after { animation:none!important; transition:none!important; } }
