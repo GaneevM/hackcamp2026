@@ -17,7 +17,7 @@ export function requireCredentials(env) {
 export function build(root=process.cwd(),env=process.env) {
   const config=resolveConfig(fs.readFileSync(path.join(root,'auth0-config.js'),'utf8'),env);
   const output=path.join(root,'dist'),sha=env.GITHUB_SHA||'local';
-  const files=new Set(['index.html','styles.css','redesign.css','studio.css','air-pointer.css','auth0-config.js','_headers','vendor/auth0-spa-js-2.4.1.min.js']);
+  const files=new Set(['index.html','styles.css','redesign.css','studio.css','hand-controls.css','auth0-config.js','_headers','vendor/auth0-spa-js-2.4.1.min.js']);
   function collect(file) {
     if(files.has(file))return;files.add(file);
     const text=fs.readFileSync(path.join(root,file),'utf8');

@@ -5,7 +5,7 @@ import { WaveCounter } from './session-metrics.js';
 const waveCounter = new WaveCounter();
 import { assessPushup, PushupCounter } from './pushup.mjs';
 import { MovementCounter } from './movement-counter.mjs';
-import { fitPointerMapReliable, mapFingerToScreen, isIndexPointing, isOpenPalm, isFist, pointerFingerRatios, learnPointingProfile, summarizePointerSamples, pointerBodyReference, pointerCoordinates, pointerHandCrop, trackedHandCrop, selectPointerHand, restoreCroppedHand, PointerFilter, PointerSwipeTracker, PointerButtonLatch, PalmScrollController } from './air-pointer.mjs';
+import { bodyReference, poseHandCrop, trackedHandCrop, restoreCroppedHand, PalmScrollController, classifyHandGesture, palmReading, FingerCommandHold } from './hand-controls.mjs';
 import { summarizePoseAngles } from './pose-calibration.mjs';
 const pushupCounter = new PushupCounter();
 const movementCounter = new MovementCounter();
@@ -13,7 +13,6 @@ let pushupPose = null, pushupUiAt = 0;
 const $ = (id) => document.getElementById(id);
 const SESSION_KEY = 'formnote_sessions_v2';
 const CALIBRATION_KEY = 'formnote_angle_calibration_v1';
-const AIR_POINTER_KEY = 'formnote_air_pointer_calibration_v3';
 const PLAN_KEY = 'formnote_physio_plan_v1';
 const MEDIA_DB = 'formnote_media_v1';
 let activeDataScope = 'guest';
@@ -55,7 +54,7 @@ const movements = {
 };
 const app = {
   stream: null, landmarker: null, running: false, raf: 0, facing: 'user', reps: 0,
-  cameraRequest: 0, cameraAcquiring: false,
+  cameraRequest: 0, cameraAcquiring: false, cameraPaused: false,
   countdownActive: false, countdownRemaining: 5, countdownTimer: null,
   phase: 'ready', confidence: null, pain: null, poseReady: false, manual: false,
   side: 'left', currentAngle: null, angleSamples: [], sessionAngles: [], activeSessionId: null,
@@ -65,8 +64,8 @@ const app = {
 
 let companion = null, carePages = null;
 let visionRuntime = null, visionFiles = null, handLandmarker = null;
-const airPointer = { enabled:false, config:null, lastDetectionAt:0, current:null, target:null, intent:null, pointAt:0, renderAt:0, pointingAt:null, candidate:null, dwellElapsed:0, dwellUpdatedAt:null, gesture:'idle', mustRelease:false, releaseAt:null, calibration:null, reference:null, poseAt:0, handFailures:0, handSide:0, filter:new PointerFilter(), latch:new PointerButtonLatch(), scroll:new PalmScrollController(), scrollSurface:null };
-const pointerCropCanvas=document.createElement('canvas');pointerCropCanvas.width=512;pointerCropCanvas.height=512;
+const handControls={enabled:false,suspended:false,gesture:'none',seenAt:0,poseAt:0,lastDetectionAt:0,pose:null,side:0,failures:0,label:null,lastHand:null,scroll:new PalmScrollController(),commands:new FingerCommandHold(),surface:null};
+const handCropCanvas=document.createElement('canvas');handCropCanvas.width=512;handCropCanvas.height=512;
 
 const readSessions = () => { try { return JSON.parse(localStorage.getItem(scopedStorageKey(SESSION_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(SESSION_KEY) : null) ?? '[]'); } catch { return []; } };
 const saveSessions = (rows) => localStorage.setItem(scopedStorageKey(SESSION_KEY), JSON.stringify(rows));
@@ -187,7 +186,7 @@ function updateAngleText() {
 }
 
 function readPose(landmarks, world) {
-  if(pointerOnlyMode()){updatePointerCameraStatus(performance.now());return false;}
+  if(handOnlyMode()){updateHandCameraStatus(performance.now());return false;}
   const movement = $('exerciseSelect').value;
   app.lastLandmarks = landmarks;
   if (movement === 'pushup') return readPushupPose(landmarks, world);
@@ -259,429 +258,122 @@ async function loadHandTracker() {
   return handLandmarker;
 }
 
-function pointerCalibrationTargets() {
-  return [{x:.1,y:.12},{x:.9,y:.12},{x:.9,y:.88},{x:.1,y:.88}];
+function detectControlHand() {
+  const video=$('video'),width=video.videoWidth,height=video.videoHeight,pose=app.cameraPaused?null:handControls.pose;
+  if(handControls.failures%3===2)handControls.side=1-handControls.side;
+  if(!handControls.label&&pose?.[15]&&pose?.[16])handControls.side=pose[15].y<pose[16].y?0:1;
+  const body=bodyReference(pose,width/height),useCrop=(!body||body.scale*height<width*.42)&&handControls.failures%4!==3;
+  const crop=useCrop?(poseHandCrop(pose,width,height,handControls.side)||(performance.now()-(handControls.seenAt??0)<800?trackedHandCrop(handControls.lastHand,width,height):null)):null;
+  if(crop)handCropCanvas.getContext('2d').drawImage(video,crop.x,crop.y,crop.size,crop.size,0,0,512,512);
+  const result=handLandmarker.detect(crop?handCropCanvas:video),hands=result.landmarks||[];
+  if(!hands.length){handControls.failures++;return null;}
+  const restored=crop?hands.map(hand=>restoreCroppedHand(hand,crop,width,height)):hands;
+  const labels=(result.handedness||[]).map(items=>items?.[0]?.categoryName||null);
+  let selected=handControls.label?labels.indexOf(handControls.label):-1;
+  if(selected<0)selected=restored.findIndex(hand=>['one','two','palm'].includes(classifyHandGesture(hand)));
+  if(selected<0)selected=0;
+  handControls.label=labels[selected]||handControls.label;
+  handControls.lastHand=restored[selected];handControls.seenAt=performance.now();handControls.failures=0;
+  return restored[selected];
 }
-function detectPointerHand() {
-  const video=$('video'),width=video.videoWidth,height=video.videoHeight,pose=airPointer.pose;
-  const body=pointerBodyReference(pose,width/height);
-  if(airPointer.handFailures%3===2)airPointer.handSide=1-airPointer.handSide;
-  if(!airPointer.handLocked&&airPointer.handFailures===0&&pose?.[15]&&pose?.[16])airPointer.handSide=pose[15].y<pose[16].y?0:1;
-  const useCrop=(!body||body.scale*height<width*.42)&&airPointer.handFailures%4!==3;
-  let crop=useCrop?(pointerHandCrop(pose,width,height,airPointer.handSide)||(performance.now()-(airPointer.lastHandAt??0)<800?trackedHandCrop(airPointer.lastHand,width,height):null)):null;
-  if(crop){
-    const previous=airPointer.handCrop;
-    if(previous?.side===airPointer.handSide&&airPointer.handFailures===0)crop={x:previous.x+(crop.x-previous.x)*.5,y:previous.y+(crop.y-previous.y)*.5,size:previous.size+(crop.size-previous.size)*.5};
-    airPointer.handCrop={...crop,side:airPointer.handSide};
-  }else airPointer.handCrop=null;
-  if(crop)pointerCropCanvas.getContext('2d').drawImage(video,crop.x,crop.y,crop.size,crop.size,0,0,512,512);
-  const result=handLandmarker.detect(crop?pointerCropCanvas:video);
-  if(result.landmarks?.[0]){
-    if(crop)result.landmarks=result.landmarks.map(hand=>restoreCroppedHand(hand,crop,width,height));
-    const labels=(result.handedness||[]).map(items=>items?.[0]?.categoryName||null);
-    const preferred=airPointer.calibration?airPointer.calibration.handLabel:airPointer.config?.handLabel;
-    const selected=selectPointerHand(result.landmarks,labels,preferred,airPointer.calibration?.stage==='targets'||airPointer.calibration?.stage==='verify');
-    airPointer.handLabel=labels[selected]||null;result.landmarks=[result.landmarks[selected]];
-    airPointer.lastHand=result.landmarks[0];airPointer.lastHandAt=performance.now();
-    airPointer.handFailures=0;
-    airPointer.handLocked=true;
-    const wrist=result.landmarks[0][0];
-    if(pose?.[15]&&pose?.[16])airPointer.handSide=Math.hypot(wrist.x-pose[15].x,wrist.y-pose[15].y)<Math.hypot(wrist.x-pose[16].x,wrist.y-pose[16].y)?0:1;
-  } else airPointer.handFailures++;
-  return result;
+function handStatus(message,progress=null) {
+  $('handControlsStatus').textContent=message;
+  const hud=$('handControlsHud'),label=$('handControlsHudText'),bar=$('handCommandProgress');
+  if(label.textContent!==message)label.textContent=message;
+  bar.hidden=progress===null;bar.value=progress??0;hud.hidden=!handControls.enabled;
+  const layer=document.querySelector('dialog[open]')||document.body;
+  if(hud.parentElement!==layer)layer.append(hud);
 }
-function pointerInput(hand,mode) {
-  const reference=pointerBodyReference(airPointer.pose,$('video').videoWidth/$('video').videoHeight);
-  if(reference){
-    const old=airPointer.reference;
-    airPointer.reference=old?{...reference,x:old.x+(reference.x-old.x)*.3,y:old.y+(reference.y-old.y)*.3,scale:old.scale+(reference.scale-old.scale)*.3}:reference;
+function stopPalmScroll(){handControls.scroll.stop();handControls.surface=null;}
+function setHandControlsEnabled(enabled) {
+  handControls.enabled=enabled;stopPalmScroll();handControls.commands.reset();handControls.gesture='none';
+  handControls.label=null;handControls.failures=0;handControls.lastHand=null;
+  $('handControlsToggle').textContent=enabled?'Hand controls on':'Enable hand controls';
+  $('handControlsToggle').setAttribute('aria-pressed',String(enabled));
+  $('handControlsLegend').hidden=!enabled;$('handControlsHud').hidden=!enabled;
+  if(!enabled)handStatus('Hand controls off. Enable them to use finger gestures.');
+}
+function setCameraViewPaused(paused) {
+  if(!app.stream)return;
+  app.cameraPaused=paused;$('video').style.display=paused?'none':'block';
+  $('overlay').style.visibility=paused?'hidden':'visible';$('gestureCameraPause').hidden=!paused;$('cameraEmpty').style.display='none';
+  app.poseReady=false;app.currentAngle=null;app.angleSamples=[];updateAngleText();stopPalmScroll();syncCameraControl();
+  if(paused)updatePausedCameraStatus();
+}
+function updatePausedCameraStatus() {
+  if(!app.cameraPaused)return;
+  $('trackingTitle').textContent='Exercise view paused';
+  $('trackingCopy').textContent='Hand sensing is still on. Hold one finger to resume, or use Turn camera off to stop the webcam.';
+  cameraState('View paused · hand sensing on','neutral','Webcam on for hand controls','Hands only');$('startBtn').disabled=false;
+}
+function performHandCommand(command) {
+  if(document.querySelector('dialog[open]')||app.autoCalibration.active){handStatus('Close the current dialog or finish angle setup before using a finger command.');return;}
+  if(command==='one'){
+    if(app.running){handStatus('Hold two fingers to finish the session before pausing the camera view.');return;}
+    if(app.countdownActive)cancelCountdown();
+    setCameraViewPaused(!app.cameraPaused);
+    handStatus(app.cameraPaused?'View paused. Hand sensing stays on; one finger resumes.':'Camera view resumed. Relax your hand before another command.');return;
   }
-  const frame=mode==='body'?(airPointer.reference||airPointer.config?.reference):null;
-  if(mode==='body'&&!frame)return null;
-  const palm=[0,5,9,13,17].reduce((sum,index)=>({x:sum.x+hand[index].x/5,y:sum.y+hand[index].y/5}),{x:0,y:0});
-  return {tip:pointerCoordinates(hand[8],frame),palm:pointerCoordinates(palm,frame)};
-}
-function pointerFingerprint() {
-  const track=app.stream?.getVideoTracks()[0],settings=track?.getSettings?.();
-  return `${app.facing}:${settings?.deviceId||'camera'}:${$('video').videoWidth||0}x${$('video').videoHeight||0}`;
-}
-function pointerStatus(message) {
-  if($('airPointerStatus').textContent!==message)$('airPointerStatus').textContent=message;
-  if(airPointer.calibration&&$('pointerCalibrationFeedback').textContent!==message)$('pointerCalibrationFeedback').textContent=message;
-  if(airPointer.enabled&&!airPointer.calibration){
-    const node=$('airPointerToast'),layer=document.querySelector('dialog[open]')||document.body;
-    if(node.parentElement!==layer)layer.append(node);
-    if(node.textContent!==message)node.textContent=message;
-    node.hidden=false;
+  if(command==='two'){
+    if(app.running){endSession();handStatus('Session finished. Relax your hand before starting another.');return;}
+    if(app.countdownActive){cancelCountdown();handStatus('Session start cancelled. Relax your hand before another command.');return;}
+    setCameraViewPaused(false);appNavigation.switchTo('move');
+    if(!app.stream||!app.landmarker){handStatus('Enable the camera before starting a session.');return;}
+    $('startBtn').click();handStatus('Session starts in five seconds. Relax your hand and get into view.');
   }
 }
-function pointerToast(message) {
-  const node=$('airPointerToast');node.textContent=message;node.hidden=false;
-  clearTimeout(pointerToast.timer);pointerToast.timer=setTimeout(()=>{node.hidden=true;},2500);
-}
-function resetPointerDwell() {
-  airPointer.candidate?.classList.remove('air-hover-target');
-  airPointer.candidate=null;airPointer.dwellElapsed=0;airPointer.dwellUpdatedAt=null;airPointer.latch.reset();
-  $('airPointerCursor').classList.remove('is-latched','is-paused');
-  $('airPointerCursor').style.setProperty('--dwell','0%');
-}
-function stopPalmScroll() {airPointer.scroll.stop();airPointer.scrollSurface=null;}
-function setPointerEnabled(enabled) {
-  airPointer.enabled=enabled;
-  stopPalmScroll();resetPointerDwell();airPointer.target=null;airPointer.current=null;airPointer.intent=null;airPointer.gesture='idle';airPointer.filter.reset();airPointer.pointingAt=null;airPointer.reference=null;airPointer.handLocked=false;airPointer.handCrop=null;airPointer.handFailures=0;airPointer.pointAt=0;
-  if(enabled)airPointer.reference=airPointer.config?.reference||pointerBodyReference(airPointer.pose,$('video').videoWidth/$('video').videoHeight);
-  if(!enabled){airPointer.mustRelease=false;airPointer.releaseAt=null;}
-  $('airPointerCursor').hidden=true;
-  $('airPointerToggle').textContent=enabled?'Turn off air pointer':'Enable air pointer';
-  $('airPointerToggle').setAttribute('aria-pressed',String(enabled));
-  $('airPointerCalibrate').disabled=!app.stream||!handLandmarker;
-  if(!enabled){resetPointerDwell();$('airPointerToast').hidden=true;}
-}
-function readPointerCalibration() {
-  try {
-    const saved=JSON.parse(localStorage.getItem(scopedStorageKey(AIR_POINTER_KEY))||'null');
-    const map=saved?.map;
-    const profile=saved?.pointingProfile,reference=saved?.reference;
-    const validProfile=[profile?.ratios,profile?.tolerance].every(values=>Array.isArray(values)&&values.length===4&&values.every(Number.isFinite))&&profile.tolerance.every(value=>value>0);
-    const validReference=saved?.mode==='camera'||(reference&&[reference.x,reference.y,reference.scale,reference.aspect].every(Number.isFinite)&&reference.scale>0&&reference.aspect>0);
-    return saved?.version===3&&saved?.verified&&validProfile&&validReference&&saved?.fingerprint===pointerFingerprint()&&['body','camera'].includes(saved.mode)&&['up','down'].every(key=>Number.isFinite(saved.swipes?.[key])&&saved.swipes[key]>0)&&[map?.x,map?.y].every(axis=>Array.isArray(axis)&&axis.length===3&&axis.every(Number.isFinite))?saved:null;
-  } catch { return null; }
-}
-function showPointerCalibration() {
-  setPointerEnabled(false);
-  $('pointerCalibration').classList.remove('swipe-mode','verify-mode');$('pointerCalibration').classList.add('position-mode');$('pointerSwipeGuide').hidden=true;$('pointerSwipeSteps').hidden=true;
-  $('pointerCalibration').hidden=false;$('airPointerCursor').hidden=true;
-  airPointer.calibration={stage:'targets',index:0,pairs:[],samples:[],pointingSamples:[],lastHandAt:null,mode:null,swipes:{},targets:pointerCalibrationTargets()};
-  $('pointerCalibrationCursor').hidden=true;$('pointerCalibrationAlign').hidden=true;
-  $('pointerCalibrationRetry').hidden=true;
-  $('airPointerCalibrate').disabled=true;
-  placePointerCalibrationTarget();
-  pointerStatus('Point at the on-screen dots to calibrate.');
-}
-function placePointerCalibrationTarget() {
-  const state=airPointer.calibration;if(!state)return;
-  $('pointerCalibrationTarget').hidden=false;
-  const directions=['Upper left ↖','Upper right ↗','Lower right ↘','Lower left ↙'];
-  $('pointerCalibrationTitle').textContent=directions[state.index];
-  $('pointerCalibrationCopy').textContent='Point one index finger. Move your whole hand to this comfortable corner of your reach, then hold still.';
-  if(state.index===0)state.targets=pointerCalibrationTargets();
-  const target=state.targets[state.index];
-  $('pointerCalibrationTarget').style.left=`${target.x*100}%`;
-  $('pointerCalibrationTarget').style.top=`${target.y*100}%`;
-  $('pointerCalibrationStep').textContent=`Position ${state.index+1} of ${state.targets.length}`;
-  state.samples=[];state.lastHandAt=null;state.readyAt=performance.now()+850;
-  $('pointerCalibrationProgress').value=0;
-}
-function cancelPointerCalibration() {
-  airPointer.calibration=null;$('pointerCalibration').hidden=true;
-  $('pointerCalibrationCursor').hidden=true;
-  $('airPointerCalibrate').disabled=!app.stream||!handLandmarker;
-  setPointerEnabled(false);pointerStatus('Calibration cancelled.');
-}
-function beginPointerCursorCheck(state) {
-  state.stage='verify';state.checkFilter=new PointerFilter();state.checkAt=null;state.checkSamples=0;state.checkCurrent=null;
-  $('pointerCalibration').classList.remove('position-mode','swipe-mode');$('pointerCalibration').classList.add('verify-mode');
-  $('pointerCalibrationTitle').textContent='Check your finger cursor';
-  $('pointerCalibrationCopy').textContent='Keep pointing. Move the green cursor into the circle and hold. Use Re-center if the alignment feels off.';
-  $('pointerSwipeGuide').hidden=true;$('pointerSwipeSteps').hidden=true;
-  $('pointerCalibrationStep').textContent='Live cursor check';$('pointerCalibrationProgress').value=0;
-  $('pointerCalibrationRetry').hidden=false;$('pointerCalibrationRetry').textContent='Redo positions';$('pointerCalibrationAlign').hidden=false;
-  const panel=$('pointerCalibration').querySelector('.pointer-calibration-panel').getBoundingClientRect();
-  state.checkTarget={x:.5,y:Math.min(.88,Math.max(.72,(panel.bottom+65)/innerHeight))};
-  $('pointerCalibrationTarget').style.left='50%';$('pointerCalibrationTarget').style.top=`${state.checkTarget.y*100}%`;
-  pointerStatus('Move the green cursor into the circle. This checks the same pointing pose you will use in the app.');
-}
-function renderPointerCursorCheck(now) {
-  const state=airPointer.calibration,node=$('pointerCalibrationCursor');
-  if(state?.stage!=='verify'||!state.checkCursor||now-state.lastHandAt>300){node.hidden=true;return;}
-  const dt=Math.min(80,Math.max(0,now-(state.checkRenderAt??now)));state.checkRenderAt=now;
-  const current=state.checkCurrent||state.checkCursor,alpha=1-Math.exp(-dt/45);
-  state.checkCurrent={x:current.x+(state.checkCursor.x-current.x)*alpha,y:current.y+(state.checkCursor.y-current.y)*alpha};
-  node.hidden=false;node.style.transform=`translate3d(${state.checkCurrent.x*innerWidth}px,${state.checkCurrent.y*innerHeight}px,0) translate(-50%,-50%)`;
-}
-function processPointerCursorCheck(state,hand,input,now) {
-  state.latestCheckTip=input.tip;
-  if(!isIndexPointing(hand,state.pointingProfile)){state.checkAt=null;state.checkSamples=0;state.checkCursor=null;$('pointerCalibrationProgress').value=0;pointerStatus('Extend your index finger as you did for the four positions. Relax your other fingers.');return;}
-  state.checkCursor=state.checkFilter.update(mapFingerToScreen(state.map,input.tip),now,{width:innerWidth,height:innerHeight});
-  const current=state.checkCurrent||state.checkCursor,distance=Math.hypot((current.x-state.checkTarget.x)*innerWidth,(current.y-state.checkTarget.y)*innerHeight);
-  const radius=Math.max(34,Math.min(50,Math.min(innerWidth,innerHeight)*.07));
-  if(state.checkMustMove){if(distance>radius*1.5)state.checkMustMove=false;pointerStatus('Move away from the circle, then bring the cursor back to check alignment.');return;}
-  if(distance>radius){state.checkAt=null;state.checkSamples=0;$('pointerCalibrationProgress').value=0;pointerStatus('Move the green cursor into the circle. Re-center or redo positions if needed.');return;}
-  if(state.checkAt===null)state.checkAt=now;state.checkSamples++;
-  $('pointerCalibrationProgress').value=Math.min(100,(now-state.checkAt)/4.5);
-  pointerStatus('Cursor aligned. Hold your pointing finger still…');
-  if(now-state.checkAt>=450&&state.checkSamples>=4){state.verified=true;beginPointerSwipeCalibration(state,'up');}
-}
-function alignPointerCursor() {
-  const state=airPointer.calibration;if(state?.stage!=='verify'||!state.latestCheckTip)return;
-  const mapped=mapFingerToScreen(state.map,state.latestCheckTip,false);
-  state.map={x:[...state.map.x],y:[...state.map.y]};state.map.x[2]+=state.checkTarget.x-mapped.x;state.map.y[2]+=state.checkTarget.y-mapped.y;
-  state.checkFilter.reset();state.checkCurrent=null;state.checkCursor=null;state.checkAt=null;state.checkMustMove=true;state.checkSamples=0;$('pointerCalibrationCursor').hidden=true;
-  pointerStatus('Cursor re-centered. Move away, then back into the circle to check it.');
-}
-function setSwipeCalibrationVisual(state,phase,travel=0,progress=0,message='') {
-  $('pointerSwipeGuide').dataset.phase=phase;
-  const active=phase==='finish'||phase==='done'?2:phase==='swipe'?1:0;
-  $('pointerSwipeSteps').querySelectorAll('li').forEach((item,index)=>{if(index===active)item.setAttribute('aria-current','step');else item.removeAttribute('aria-current');});
-  state.visualTarget=Math.max(0,Math.min(1,travel));state.visualProgressTarget=Math.max(0,Math.min(100,progress));
-  $('pointerCalibrationProgress').setAttribute('aria-label',phase==='ready'?'Starting hold':phase==='finish'?'Ending hold':'Swipe progress');
-  if(message)pointerStatus(message);
-}
-function renderSwipeCalibrationFrame(now) {
-  const state=airPointer.calibration;
-  if(!state||!['up','down'].includes(state.stage))return;
-  const dt=Math.min(80,Math.max(0,now-(state.visualAt??now)));state.visualAt=now;
-  const alpha=matchMedia('(prefers-reduced-motion: reduce)').matches?1:1-Math.exp(-dt/55);
-  state.visualPosition=(state.visualPosition??0)+((state.visualTarget??0)-(state.visualPosition??0))*alpha;
-  state.visualProgress=(state.visualProgress??0)+((state.visualProgressTarget??0)-(state.visualProgress??0))*alpha;
-  const range=innerHeight<=650?30:45,sign=state.stage==='up'?1:-1;
-  $('pointerSwipeGuide').style.setProperty('--live-offset',`${sign*range*(1-state.visualPosition*2)}px`);
-  $('pointerCalibrationProgress').value=state.visualProgress;
-}
-function updateSwipeCalibrationVisual(state,point,now) {
-  const tracker=state.swipe,threshold=tracker.thresholds[state.stage];
-  const history=tracker.history;
-  if(!tracker.anchor){
-    let first=history.at(-1);
-    for(let i=history.length-1;i>=0;i--){if(Math.hypot(history[i].x-point.x,history[i].y-point.y)>=threshold*.22)break;first=history[i];}
-    const hold=Math.min(1,Math.max(0,(now-(first?.at??now))/180));
-    setSwipeCalibrationVisual(state,'ready',0,hold*25,'Hold your whole open hand still.');return;
+function processControlHand(hand,now) {
+  if(!handControls.enabled||handControls.suspended)return;
+  if(hand)handControls.seenAt=now;
+  if(handOnlyMode()){drawTrackedHand(hand);updateHandCameraStatus(now);}
+  const gesture=classifyHandGesture(hand);handControls.gesture=gesture;
+  const action=handControls.commands.update(gesture,now);
+  if(action){stopPalmScroll();performHandCommand(action);return;}
+  if(gesture==='palm'){
+    const aspect=$('video').videoWidth/$('video').videoHeight||1,palm=palmReading(hand,aspect);
+    if(!handControls.scroll.history.length&&!handControls.scroll.armed)handControls.scroll.ranges={up:palm.range,down:palm.range};
+    handControls.scroll.observe(palm.point,now,Math.min(1600,innerHeight*1.8));
+    const speed=handControls.scroll.targetVelocity;
+    handStatus(!handControls.scroll.armed?'Hold your open palm briefly, then raise or lower it to scroll.':Math.abs(speed)>1?'Scrolling '+(speed<0?'up ↑':'down ↓')+' · fist to stop.':'Raise or lower your open palm to scroll. Fist to stop.');return;
   }
-  const signedDistance=state.stage==='up'?tracker.anchor.y-point.y:point.y-tracker.anchor.y;
-  const travel=Math.max(0,Math.min(1,signedDistance/threshold));
-  if(signedDistance < -threshold*.3){setSwipeCalibrationVisual(state,'swipe',0,25,`Follow the arrow: move your whole hand ${state.stage}.`);return;}
-  if(travel<1){setSwipeCalibrationVisual(state,'swipe',travel,25+travel*50,`Move your whole hand ${state.stage} ${state.stage==='up'?'↑':'↓'}`);return;}
-  if(Math.abs(point.x-tracker.anchor.x)>=Math.abs(signedDistance)*.7){setSwipeCalibrationVisual(state,'swipe',travel,75,`Move straight ${state.stage}, following the arrow.`);return;}
-  let first=history.at(-1);
-  for(let i=history.length-1;i>=0;i--){if(Math.hypot(history[i].x-point.x,history[i].y-point.y)>=threshold*.22)break;first=history[i];}
-  const hold=Math.min(1,Math.max(0,(now-(first?.at??now))/280));
-  setSwipeCalibrationVisual(state,'finish',travel,75+hold*24,'Hold here. Keep your open hand still.');
+  stopPalmScroll();
+  if(gesture==='one'||gesture==='two'){
+    const label=gesture==='one'?(app.cameraPaused?'Resume camera view':'Pause camera view'):(app.running?'Finish session':app.countdownActive?'Cancel session start':'Start session');
+    handStatus(handControls.commands.locked?'Relax your fingers before another command.':label+' · hold '+Math.max(0,(650-handControls.commands.elapsed)/1000).toFixed(1)+'s',handControls.commands.locked?null:handControls.commands.progress);
+  }else handStatus(gesture==='fist'?'Stopped ✊ · 1 finger: camera view · 2 fingers: session.':gesture==='none'?'Show one hand. 1 finger: camera view · 2 fingers: session.':'1 index finger: camera view · index + middle: session · open palm: scroll.');
 }
-function beginPointerSwipeCalibration(state,direction) {
-  state.stage=direction;state.swipe=new PointerSwipeTracker({up:state.mode==='body'?.2:.035,down:state.mode==='body'?.2:.035});
-  state.confirm=null;state.visualPosition=0;state.visualProgress=0;state.visualAt=null;
-  $('pointerCalibration').classList.remove('position-mode','verify-mode');$('pointerCalibration').classList.add('swipe-mode');$('pointerSwipeGuide').hidden=false;$('pointerSwipeSteps').hidden=false;
-  $('pointerCalibrationCursor').hidden=true;$('pointerCalibrationAlign').hidden=true;$('pointerCalibrationRetry').hidden=true;
-  $('pointerSwipeGuide').dataset.direction=direction;$('pointerSwipeArrow').textContent=direction==='up'?'↑':'↓';
-  $('pointerSwipeGuide').style.removeProperty('--live-offset');
-  $('pointerSwipeDirection').textContent=`Swipe ${direction==='up'?'↑':'↓'}`;
-  $('pointerCalibrationTarget').hidden=true;
-  $('pointerCalibrationTitle').textContent=`Swipe ${direction} ${direction==='up'?'↑':'↓'}`;
-  $('pointerCalibrationCopy').textContent=`Open your whole hand. Move ${direction}, then hold still.`;
-  $('pointerCalibrationStep').textContent=direction==='up'?'Scroll setup · 1 of 2':'Scroll setup · 2 of 2';
-  $('pointerCalibrationProgress').value=0;
-  setSwipeCalibrationVisual(state,'ready',0,0,'Hold your whole open hand still.');
-  $('pointerSwipeGuide').querySelector('.pointer-swipe-demo').getAnimations().forEach(animation=>{animation.currentTime=0;});
-}
-function finishPointerCalibration(state) {
-  if(!state.verified||!state.pointingProfile){beginPointerCursorCheck(state);return;}
-  const config={version:3,verified:!!state.verified,map:state.map,mode:state.mode,reference:state.mode==='body'?airPointer.reference:null,pointingProfile:state.pointingProfile,handLabel:state.handLabel,swipes:state.swipes,fingerprint:pointerFingerprint(),savedAt:new Date().toISOString()};
-  try { localStorage.setItem(scopedStorageKey(AIR_POINTER_KEY),JSON.stringify(config)); }
-  catch { pointerToast('Could not save calibration in this browser.');cancelPointerCalibration();return; }
-  airPointer.config=config;airPointer.calibration=null;$('pointerCalibration').hidden=true;setPointerEnabled(true);
-  $('pointerCalibrationCursor').hidden=true;
-  airPointer.scroll=new PalmScrollController(config.swipes);airPointer.mustRelease=true;airPointer.releaseAt=null;
-  $('airPointerCalibrate').disabled=false;
-  pointerStatus('Point to click. Raise or lower your open palm to scroll; make a fist to stop.');
-  pointerToast('Air pointer calibrated on this device.');
-}
-function pointerTargetAt(x,y) {
-  const selector='button:not(:disabled),a[href],summary,select:not(:disabled),input:not([type="hidden"]):not(:disabled),textarea:not(:disabled),label[for],[role="button"],[role="tab"],[role="checkbox"],[role="switch"],[role="menuitem"],[role="link"],[role="option"]';
-  const target=document.elementFromPoint(x,y)?.closest(selector);
-  return pointerControlAvailable(target)?target:null;
-}
-function pointerControlAvailable(target) {
-  if(!target?.isConnected||target.matches(':disabled,[aria-disabled="true"]')||target.closest('[hidden],[inert],[aria-hidden="true"]'))return false;
-  const dialog=document.querySelector('dialog[open]');
-  return (!dialog||dialog.contains(target))&&target.getClientRects().length>0;
-}
-function processPointerHand(result,now) {
-  const hand=result?.landmarks?.[0];
-  const calibration=airPointer.calibration;
-  if(calibration){
-    if(calibration.stage==='error')return;
-    const preview=$('pointerCalibrationPreview'),context=preview.getContext('2d');
-    context.save();context.translate(preview.width,0);context.scale(-1,1);context.drawImage($('video'),0,0,preview.width,preview.height);context.restore();
-    if(hand?.[8])drawPointerPreview(context,preview,hand);
-    if(calibration.confirm){
-      if(now<calibration.confirm.until)return;
-      if(calibration.confirm.next==='down')beginPointerSwipeCalibration(calibration,'down');else finishPointerCalibration(calibration);
-      return;
-    }
-    if(!hand){
-      if(now-(calibration.lastHandAt??0)>350)calibration.samples=[];calibration.swipe?.update(null,now);
-      if(calibration.stage==='verify'){calibration.checkAt=null;calibration.checkSamples=0;calibration.checkCursor=null;}
-      if(['up','down'].includes(calibration.stage))setSwipeCalibrationVisual(calibration,'paused',0,0);
-      pointerStatus('Hand not visible. Raise it into the preview; face the camera in even light.');return;
-    }
-    if(!calibration.mode){
-      calibration.mode=pointerBodyReference(airPointer.pose,$('video').videoWidth/$('video').videoHeight)?'body':'camera';
-    }
-    const input=pointerInput(hand,calibration.mode);
-    if(!input){pointerStatus('Show your pointing hand in the preview.');return;}
-    calibration.lastHandAt=now;
-    if(calibration.stage==='verify'){processPointerCursorCheck(calibration,hand,input,now);return;}
-    if(calibration.stage!=='targets'){
-      if(!isOpenPalm(hand)){calibration.swipe.reset();setSwipeCalibrationVisual(calibration,'paused',0,0,'Open your whole hand. Spread your fingers.');return;}
-      const stroke=calibration.swipe.update(input.palm,now);
-      if(!stroke){updateSwipeCalibrationVisual(calibration,input.palm,now);return;}
-      if(stroke.direction!==calibration.stage){setSwipeCalibrationVisual(calibration,'ready',0,0,`Follow the arrow: swipe ${calibration.stage}.`);return;}
-      calibration.swipes[stroke.direction]=stroke.distance*.65;
-      calibration.confirm={until:now+700,next:stroke.direction==='up'?'down':'finish'};
-      setSwipeCalibrationVisual(calibration,'done',1,100,`${stroke.direction==='up'?'Up':'Down'} swipe captured ✓`);
-      return;
-    }
-    if(now<calibration.readyAt){pointerStatus('Move to the new dot, then hold.');return;}
-    const features=pointerFingerRatios(hand);
-    if(isOpenPalm(hand)||isFist(hand)||!learnPointingProfile([features])){calibration.samples=[];pointerStatus('Extend one index finger and relax the other fingers. The green marker shows the fingertip being measured.');return;}
-    const previous=calibration.pairs.at(-1)?.camera;
-    if(previous&&Math.hypot(input.tip.x-previous.x,input.tip.y-previous.y)<(calibration.mode==='body'?.08:.025)){calibration.samples=[];pointerStatus('Move your whole hand toward the new corner before holding.');return;}
-    calibration.samples.push({...input.tip,features,at:now});calibration.samples=calibration.samples.filter(p=>now-p.at<=2400).slice(-10);
-    const reading=summarizePointerSamples(calibration.samples),elapsed=now-calibration.samples[0].at;
-    const stable=reading&&reading.jitter<(calibration.mode==='body'?.12:.025);
-    $('pointerCalibrationProgress').value=stable?Math.min(100,elapsed/6):0;
-    if(!stable||elapsed<550){pointerStatus(stable?'Hold steady…':'Keep your fingertip still on this dot.');return;}
-    calibration.pairs.push({camera:reading.point,screen:calibration.targets[calibration.index]});calibration.index++;
-    calibration.handLabel??=airPointer.handLabel;
-    calibration.pointingSamples.push(...calibration.samples.map(sample=>sample.features));
-    if(calibration.index<calibration.targets.length){placePointerCalibrationTarget();return;}
-    try {calibration.map=fitPointerMapReliable(calibration.pairs).map;calibration.pointingProfile=learnPointingProfile(calibration.pointingSamples);if(!calibration.pointingProfile)throw new Error('Keep the same pointing pose at all four positions.');beginPointerCursorCheck(calibration);}
-    catch(error){
-      calibration.stage='error';$('pointerCalibrationTarget').hidden=true;$('pointerCalibrationRetry').hidden=false;
-      $('pointerCalibrationTitle').textContent='Let’s try those positions again';
-      $('pointerCalibrationCopy').textContent='Use the same hand and wait for each dot to move before aiming at the next one.';
-      pointerStatus(error.message||'The positions overlapped. Restart the four dots.');
-    }
-    return;
-  }
-  if(!airPointer.enabled||airPointer.suspended)return;
-  airPointer.handSeenAt=hand?now:airPointer.handSeenAt;
-  if(pointerOnlyMode()){drawPointerHand(hand);updatePointerCameraStatus(now);}
-  const pointing=hand&&isIndexPointing(hand,airPointer.config.pointingProfile);
-  airPointer.canDwell=false;
-  if(!hand){
-    airPointer.gesture='missing';airPointer.releaseAt=null;airPointer.dwellUpdatedAt=null;stopPalmScroll();
-    pointerStatus('Hand not visible. Raise it into view; tracking pauses until you return.');return;
-  }
-  if(!pointing){
-    // Lost tracking never counts as the deliberate release required after a click.
-    if(airPointer.mustRelease){if(airPointer.releaseAt===null)airPointer.releaseAt=now;if(now-airPointer.releaseAt>=450){airPointer.mustRelease=false;airPointer.releaseAt=null;}}
-    else airPointer.releaseAt=null;
-    if(isFist(hand)){
-      const fistAt=airPointer.gesture==='fist'?airPointer.fistAt:now;
-      stopPalmScroll();airPointer.gesture='fist';airPointer.fistAt=fistAt;airPointer.dwellUpdatedAt=null;
-      if(!airPointer.candidate||now-fistAt>=160){resetPointerDwell();airPointer.pointingAt=null;airPointer.target=null;}
-      pointerStatus('Stopped ✊ · point to click, or open your hand to scroll.');return;
-    }
-    if(isOpenPalm(hand)){
-      resetPointerDwell();airPointer.gesture='palm';airPointer.pointingAt=null;airPointer.target=null;
-      const input=pointerInput(hand,airPointer.config.mode);
-      airPointer.scroll.observe(input?.palm,now,Math.min(1600,innerHeight*1.8));
-      if(!input){stopPalmScroll();pointerStatus('Scrolling paused. Show both shoulders and your open hand.');return;}
-      const speed=airPointer.scroll.targetVelocity;
-      pointerStatus(!airPointer.scroll.armed?'Hold your open palm briefly to set its starting position.':Math.abs(speed)>1?`Scrolling ${speed<0?'up ↑':'down ↓'} · make a fist to stop.`:'Raise or lower your open palm to scroll. Make a fist to stop.');
-    }else{
-      stopPalmScroll();airPointer.gesture='uncertain';airPointer.dwellUpdatedAt=null;
-      pointerStatus('Point with your index finger to aim. Open your hand to scroll.');
-    }
-    return;
-  }
-  stopPalmScroll();airPointer.gesture='point';airPointer.releaseAt=null;
-  const input=pointerInput(hand,airPointer.config.mode);
-  if(!input){airPointer.dwellUpdatedAt=null;pointerStatus('Show both shoulders so distance tracking can resume.');return;}
-  const mapped=mapFingerToScreen(airPointer.config.map,input.tip);if(!mapped)return;
-  if(now-airPointer.pointAt>250){airPointer.filter.reset();airPointer.pointingAt=now;resetPointerDwell();}
-  if(airPointer.pointingAt===null)airPointer.pointingAt=now;
-  airPointer.target=airPointer.filter.update(mapped,now,{width:innerWidth,height:innerHeight,precision:!!airPointer.candidate});
-  airPointer.intent=airPointer.filter.intent;airPointer.pointAt=now;
-  airPointer.canDwell=now-airPointer.pointingAt>=220;
-}
-function pointerScrollSurface(direction) {
-  const dialog=document.querySelector('dialog[open]');
-  let node=document.elementFromPoint((airPointer.current?.x??.5)*innerWidth,(airPointer.current?.y??.5)*innerHeight);
+function controlScrollSurface(direction) {
+  const dialog=document.querySelector('dialog[open]');let node=document.elementFromPoint(innerWidth/2,innerHeight/2);
   while(node&&node!==document.body){
-    const style=getComputedStyle(node),canScroll=/auto|scroll/.test(style.overflowY)&&node.scrollHeight>node.clientHeight+2;
+    const style=getComputedStyle(node),canScroll=['auto','scroll'].includes(style.overflowY)&&node.scrollHeight>node.clientHeight+2;
     if(canScroll&&(direction<0?node.scrollTop>0:node.scrollTop+node.clientHeight<node.scrollHeight-1))break;
     node=node.parentElement;
   }
   return node&&node!==document.body?node:dialog||document.scrollingElement;
 }
-function renderPalmScrollFrame(now) {
-  if(!airPointer.enabled||airPointer.suspended||airPointer.gesture!=='palm'){stopPalmScroll();return;}
-  const delta=airPointer.scroll.tick(now);if(!delta)return;
-  const surface=airPointer.scrollSurface||pointerScrollSurface(Math.sign(delta));
-  const dialog=document.querySelector('dialog[open]');
+function renderHandControlFrame(now) {
+  if(!handControls.enabled||handControls.suspended||handControls.gesture!=='palm'){stopPalmScroll();return;}
+  const delta=handControls.scroll.tick(now);if(!delta)return;
+  const surface=handControls.surface||controlScrollSurface(Math.sign(delta)),dialog=document.querySelector('dialog[open]');
   if(!surface?.isConnected||(dialog&&surface!==dialog&&!dialog.contains(surface))){stopPalmScroll();return;}
-  airPointer.scrollSurface=surface;
-  // Direct frame-sized steps have no browser animation that could drift after a fist.
-  surface.scrollBy({top:delta,behavior:'instant'});
+  handControls.surface=surface;surface.scrollBy({top:delta,behavior:'instant'});
 }
-function renderPointerFrame(now) {
-  renderSwipeCalibrationFrame(now);
-  renderPointerCursorCheck(now);
-  renderPalmScrollFrame(now);
-  const cursor=$('airPointerCursor');
-  if(!airPointer.enabled||airPointer.suspended||!airPointer.target||now-airPointer.pointAt>240){cursor.hidden=true;resetPointerDwell();airPointer.renderAt=now;return;}
-  const dt=Math.min(80,now-(airPointer.renderAt||now));airPointer.renderAt=now;
-  const current=airPointer.current||airPointer.target,alpha=1-Math.exp(-dt/40);
-  airPointer.current={x:current.x+(airPointer.target.x-current.x)*alpha,y:current.y+(airPointer.target.y-current.y)*alpha};
-  let x=Math.min(innerWidth-1,Math.max(1,airPointer.current.x*innerWidth)),y=Math.min(innerHeight-1,Math.max(1,airPointer.current.y*innerHeight));
-  const openDialog=document.querySelector('dialog[open]'),cursorLayer=openDialog||document.body;
-  if(cursor.parentElement!==cursorLayer)cursorLayer.append(cursor);
-  cursor.hidden=false;
-  const intent={x:(airPointer.intent?.x??airPointer.current.x)*innerWidth,y:(airPointer.intent?.y??airPointer.current.y)*innerHeight};
-  let target=airPointer.candidate;
-  if(target&&(!pointerControlAvailable(target)||!airPointer.latch.update(intent,target.getBoundingClientRect(),now))){
-    resetPointerDwell();airPointer.filter.reset();airPointer.target={...airPointer.intent};airPointer.current={...airPointer.intent};
-    cursor.style.transform=`translate3d(${intent.x}px,${intent.y}px,0) translate(-50%,-50%)`;return;
-  }
-  if(!target&&airPointer.canDwell&&!airPointer.mustRelease){
-    target=pointerTargetAt(x,y);
-    if(target){
-      airPointer.candidate=target;airPointer.latch.acquire(intent);airPointer.dwellUpdatedAt=now;target.classList.add('air-hover-target');
-      const box=target.getBoundingClientRect();
-      airPointer.latchOffset={x:box.width>24?Math.max(12,Math.min(box.width-12,x-box.left))/box.width:.5,y:box.height>24?Math.max(12,Math.min(box.height-12,y-box.top))/box.height:.5};
-    }
-  }
-  if(target){const box=target.getBoundingClientRect();x=box.left+box.width*airPointer.latchOffset.x;y=box.top+box.height*airPointer.latchOffset.y;}
-  cursor.style.transform=`translate3d(${x}px,${y}px,0) translate(-50%,-50%)`;
-  cursor.classList.toggle('is-latched',!!target);cursor.classList.toggle('is-paused',!airPointer.canDwell);
-  if(!airPointer.canDwell||now-airPointer.pointAt>160){airPointer.dwellUpdatedAt=null;return;}
-  if(airPointer.mustRelease){airPointer.releaseAt=null;pointerStatus('Relax your finger briefly before the next click.');return;}
-  if(!target){resetPointerDwell();pointerStatus('Point at a visible button, tab, or control and hold.');return;}
-  const label=(target.getAttribute('aria-label')||target.innerText||target.textContent||target.title||'Control').replace(/\s+/g,' ').trim().slice(0,48);
-  const duration=target.id==='stageStop'||/delete|clear|remove|sign out|log out|finish/i.test(label)?1100:target.id==='startBtn'?800:target.id==='capturePhoto'?700:650;
-  airPointer.dwellElapsed+=Math.max(0,Math.min(60,now-(airPointer.dwellUpdatedAt??now)));airPointer.dwellUpdatedAt=now;
-  const progress=Math.min(1,airPointer.dwellElapsed/duration);
-  cursor.style.setProperty('--dwell',`${progress*100}%`);
-  pointerStatus(`${label||'Control'} · latched · hold ${Math.max(0,(duration-airPointer.dwellElapsed)/1000).toFixed(1)}s`);
-  if(progress>=1){target.click();airPointer.mustRelease=true;airPointer.releaseAt=null;resetPointerDwell();pointerStatus('Action activated. Release your index finger to use the pointer again.');pointerToast(`${label||'Control'} activated.`);}
+async function toggleHandControls() {
+  if(handControls.enabled){setHandControlsEnabled(false);if(app.cameraPaused)setCameraViewPaused(false);return;}
+  $('handControlsToggle').disabled=true;
+  try{
+    if(!app.stream)await startCamera();if(!app.stream)return;
+    await loadHandTracker();if(!app.stream)return;
+    setHandControlsEnabled(true);handStatus('Hold 1 index finger for camera view, or 2 fingers for the session. Open palm scrolls; fist stops.');
+  }catch(error){setHandControlsEnabled(false);toast('Hand controls could not load. Check the camera and try again.');console.warn('Hand controls unavailable',error);}
+  finally{$('handControlsToggle').disabled=false;}
 }
-async function toggleAirPointer() {
-  if(airPointer.enabled){setPointerEnabled(false);pointerStatus('Air pointer off.');return;}
-  $('airPointerToggle').disabled=true;pointerStatus('Starting the camera and hand tracker…');
-  try {
-    if(!app.stream)await startCamera();
-    if(!app.stream)return;
-    await loadHandTracker();
-    if(!app.stream){pointerStatus('Camera was turned off. Enable it before using the air pointer.');return;}
-    $('airPointerCalibrate').disabled=false;
-    const config=readPointerCalibration();
-    if(config){airPointer.config=config;setPointerEnabled(true);airPointer.scroll=new PalmScrollController(config.swipes);airPointer.mustRelease=true;airPointer.releaseAt=null;pointerStatus('Relax your finger briefly. Point to click; move an open palm to scroll; make a fist to stop.');}
-    else showPointerCalibration();
-  } catch(error){pointerStatus(`Air pointer could not start: ${error.message||'check the camera and try again.'}`);setPointerEnabled(false);}
-  finally{$('airPointerToggle').disabled=false;}
-}
-$('airPointerToggle').addEventListener('click',toggleAirPointer);
-$('airPointerCalibrate').addEventListener('click',()=>{if(handLandmarker&&app.stream)showPointerCalibration();});
-$('pointerCalibrationCancel').addEventListener('click',cancelPointerCalibration);
-$('pointerCalibrationRetry').addEventListener('click',showPointerCalibration);
-$('pointerCalibrationAlign').addEventListener('click',alignPointerCursor);
-window.addEventListener('keydown',event=>{if(event.key==='Escape'){if(airPointer.calibration)cancelPointerCalibration();else if(airPointer.enabled){setPointerEnabled(false);pointerStatus('Air pointer off.');}}});
-window.addEventListener('blur',()=>{airPointer.suspended=true;stopPalmScroll();resetPointerDwell();airPointer.canDwell=false;});
-window.addEventListener('focus',()=>{airPointer.suspended=document.hidden;airPointer.pointingAt=null;});
-document.addEventListener('visibilitychange',()=>{airPointer.suspended=document.hidden;if(document.hidden){stopPalmScroll();resetPointerDwell();airPointer.canDwell=false;}});
-document.addEventListener('scroll',()=>{if(airPointer.candidate)resetPointerDwell();},true);
+$('handControlsToggle').addEventListener('click',toggleHandControls);
+$('resumeCameraView').addEventListener('click',()=>setCameraViewPaused(false));
+window.addEventListener('keydown',event=>{if(event.key==='Escape'&&handControls.enabled){setHandControlsEnabled(false);if(app.cameraPaused)setCameraViewPaused(false);}});
+window.addEventListener('blur',()=>{handControls.suspended=true;stopPalmScroll();handControls.commands.cancel();});
+window.addEventListener('focus',()=>{handControls.suspended=document.hidden;});
+document.addEventListener('visibilitychange',()=>{handControls.suspended=document.hidden;if(document.hidden){stopPalmScroll();handControls.commands.cancel();}});
 
 async function enumerateCameras() {
   if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -695,7 +387,7 @@ async function enumerateCameras() {
 
 async function startCamera(deviceId) {
   if (!navigator.mediaDevices?.getUserMedia) { toast('Use a modern browser on localhost or HTTPS.'); return; }
-  setPointerEnabled(false);if(airPointer.calibration)cancelPointerCalibration();airPointer.config=null;airPointer.pose=null;
+  setHandControlsEnabled(false);handControls.pose=null;app.cameraPaused=false;$('gestureCameraPause').hidden=true;$('overlay').style.visibility='visible';
   const requestId = ++app.cameraRequest;
   app.cameraAcquiring = true; syncCameraControl();
   try {
@@ -732,8 +424,7 @@ function stopCamera() {
   }
   if (app.countdownActive) cancelCountdown();
   app.cameraRequest++; app.cameraAcquiring = false;
-  setPointerEnabled(false);
-  if (airPointer.calibration) cancelPointerCalibration();
+  setHandControlsEnabled(false);
   app.stream?.getTracks().forEach(track => track.stop());
   app.stream = null;
   if (app.raf) cancelAnimationFrame(app.raf);
@@ -749,7 +440,7 @@ function stopCamera() {
   $('capturePhoto').disabled = true;
   app.poseReady = false; app.currentAngle = null; app.angleSamples = [];
   updateAngleText();
-  pointerStatus('Air pointer is off while the camera is off.');
+  handStatus('Webcam off. Click Enable camera to use hand controls again.');app.cameraPaused=false;$('gestureCameraPause').hidden=true;$('overlay').style.visibility='visible';
   syncCameraControl();
   cameraState('Camera off', 'neutral', 'Camera off · your session history is saved.', '0 joints');
   toast('Camera off. Your saved progress is unchanged.');
@@ -773,24 +464,17 @@ function canvasPoint(point, video, stage) {
 }
 const skeleton = [[11,13],[13,15],[12,14],[14,16],[11,12],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,31],[28,32]];
 const handSkeleton=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[0,17],[17,18],[18,19],[19,20]];
-function pointerOnlyMode() {
-  return !!(airPointer.enabled||airPointer.calibration)&&!app.running&&!app.countdownActive&&!app.autoCalibration.active&&!$('calibrationDialog').open;
+function handOnlyMode(){return handControls.enabled&&!app.cameraPaused&&!app.running&&!app.countdownActive&&!app.autoCalibration.active&&!$('calibrationDialog').open;}
+function updateHandCameraStatus(now){
+ if(!handOnlyMode())return;
+ const ready=now-(handControls.seenAt??-1000)<300;
+ app.poseReady=false;app.currentAngle=null;app.angleSamples=[];$('angleLive').textContent='Hand controls';
+ $('trackingTitle').textContent=ready?'Hand controls ready':'Show your hand to the camera';
+ $('trackingCopy').textContent='1 index finger: camera view. 2 fingers: session. Exercise framing is checked when the session starts.';
+ $('startBtn').disabled=!app.stream||!app.landmarker;
+ cameraState(ready?'Hand controls ready':'Waiting for hand',ready?'good':'neutral','Webcam on · hand controls enabled',ready?'21 hand points':'Show one hand');
 }
-function updatePointerCameraStatus(now) {
-  if(!pointerOnlyMode())return;
-  const handReady=now-(airPointer.handSeenAt??-1000)<300;
-  app.poseReady=false;app.currentAngle=null;app.angleSamples=[];$('angleLive').textContent='Hand controls';
-  $('trackingTitle').textContent=airPointer.calibration?'Setting up hand controls':handReady?'Hand controls ready':'Show your hand to the camera';
-  $('trackingCopy').textContent='Exercise framing is checked when you start a session. Hand control does not require your knees or feet in view.';
-  $('startBtn').disabled=!!airPointer.calibration||!app.stream||!app.landmarker;
-  cameraState(airPointer.calibration?'Hand setup':handReady?'Hand controls ready':'Waiting for hand',handReady?'good':'neutral','Hand controls · exercise not started',handReady?'21 hand points':'Show one hand');
-}
-function drawPointerPreview(context,canvas,hand) {
-  context.strokeStyle='#9fe1bb';context.lineWidth=1.5;
-  for(const [a,b] of handSkeleton){context.beginPath();context.moveTo((1-hand[a].x)*canvas.width,hand[a].y*canvas.height);context.lineTo((1-hand[b].x)*canvas.width,hand[b].y*canvas.height);context.stroke();}
-  context.beginPath();context.arc((1-hand[8].x)*canvas.width,hand[8].y*canvas.height,5,0,Math.PI*2);context.fillStyle='#d9ff67';context.fill();
-}
-function drawPointerHand(hand) {
+function drawTrackedHand(hand) {
   drawPose(null);if(!hand)return;
   const context=$('overlay').getContext('2d'),video=$('video'),stage=$('stage');context.lineWidth=2;context.strokeStyle='#9fe1bb';context.fillStyle='#d9ff67';
   for(const [a,b] of handSkeleton){const p=canvasPoint(hand[a],video,stage),q=canvasPoint(hand[b],video,stage);context.beginPath();context.moveTo(p.x,p.y);context.lineTo(q.x,q.y);context.stroke();}
@@ -857,21 +541,20 @@ function updateMovementCounter(landmarks, now) {
 }
 
 function monitor() {
-  const frameAt=performance.now();renderPointerFrame(frameAt);
+  const frameAt=performance.now();renderHandControlFrame(frameAt);if(app.cameraPaused)updatePausedCameraStatus();
   if(!app.stream){app.raf=0;return;}
   if ($('video').readyState < 2) { app.raf = requestAnimationFrame(monitor); return; }
-  // The pointer renders every animation frame. Idle shoulder measurements need
-  // fewer model calls than an active exercise, leaving time for hand detection.
-  const pointerActive=airPointer.enabled||airPointer.calibration;
-  const poseDue=!pointerActive||frameAt-airPointer.poseAt>=(app.running?65:125);
+  // Idle hand controls need fewer body model calls than an active exercise.
+  const handsActive=handControls.enabled;
+  const poseDue=!app.cameraPaused&&(!handsActive||frameAt-handControls.poseAt>=(app.running?65:125));
   if (app.landmarker&&poseDue) {
-    airPointer.poseAt=frameAt;
+    handControls.poseAt=frameAt;
     try {
       const frameTime=performance.now();
       const result = app.landmarker.detectForVideo($('video'), frameTime);
       const landmarks = result.landmarks?.[0]; const world = result.worldLandmarks?.[0];
-      airPointer.pose=landmarks||null;
-      if(pointerOnlyMode()){updatePointerCameraStatus(frameTime);}
+      handControls.pose=landmarks||null;
+      if(handOnlyMode()){updateHandCameraStatus(frameTime);}
       else {
       drawPose(landmarks);
       if (landmarks) {
@@ -908,10 +591,10 @@ function monitor() {
       if (app.running && !app.manual) companion?.observe({ ready: app.poseReady, angle: app.currentAngle, reps: app.reps, phase: app.phase });
     } catch (error) { console.warn('Pose estimate skipped', error); }
   }
-  if(handLandmarker&&pointerActive&&frameAt-airPointer.lastDetectionAt>=80){
-    airPointer.lastDetectionAt=frameAt;
-    try{processPointerHand(detectPointerHand(),performance.now());}
-    catch(error){airPointer.canDwell=false;airPointer.gesture='missing';stopPalmScroll();resetPointerDwell();pointerStatus('Hand tracking paused. Hold your hand in view to retry.');console.warn('Hand estimate skipped',error);}
+  if(handLandmarker&&handsActive&&frameAt-handControls.lastDetectionAt>=80){
+    handControls.lastDetectionAt=frameAt;
+    try{processControlHand(detectControlHand(),performance.now());}
+    catch(error){handControls.gesture='none';stopPalmScroll();handControls.commands.cancel();handStatus('Hand tracking paused. Show your hand to retry.');console.warn('Hand estimate skipped',error);}
   }
   app.raf = requestAnimationFrame(monitor);
 }
@@ -995,7 +678,7 @@ function beginSession(manual = false) {
   $('repGoal').textContent = Number.isInteger(target) && target > 0 ? '0 / ' + target + ' session goal' : 'One comfortable rep at a time';
   if (manual) {
     app.cameraRequest++; app.cameraAcquiring = false;
-    setPointerEnabled(false);if(airPointer.calibration)cancelPointerCalibration();
+    setHandControlsEnabled(false);
     $('cameraEmpty').style.display = 'grid'; $('video').style.display = 'none'; app.stream?.getTracks().forEach((track) => track.stop()); app.stream = null;
     $('overlay').getContext('2d').clearRect(0, 0, $('overlay').width, $('overlay').height); $('manualCounter').style.display = 'flex';
     $('setupTitle').textContent = 'Manual session'; $('setupCopy').textContent = 'Use Add rep below to record each completed repetition.';
@@ -1012,6 +695,7 @@ function beginSession(manual = false) {
 $('startBtn').onclick = () => {
   if(app.running||app.countdownActive)return;
   if (!app.stream || !app.landmarker) { toast('Set up camera or log manually.'); return; }
+  if(app.cameraPaused)setCameraViewPaused(false);
   beginSession(false);
   if (!app.poseReady) toast('Session started. Step into view; counting waits for the selected joints.');
 };
@@ -1451,7 +1135,7 @@ function buildAppScreens() {
   [['exerciseSelect','Movement'],['bodySide','Body side'],['cameraSelect','Camera']].forEach(([id,label]) => {
     const field = document.createElement('label'); field.textContent = label; field.append($(id)); optionFields.append(field);
   });
-  optionFields.append($('switchCamera'), $('airPointerToggle'), $('airPointerCalibrate'), $('airPointerStatus')); $('movement').append(cameraOptions);
+  optionFields.append($('switchCamera')); $('movement').append(cameraOptions);
   buildPushupCoach();
   // Progress has three separate workspaces, rather than a chart beside a long form.
   const progressNav = document.createElement('nav'); progressNav.className = 'record-nav'; progressNav.setAttribute('aria-label','Progress views');
@@ -1487,14 +1171,14 @@ function buildAppScreens() {
   let activeScreen = 'home';
   const switchTo = (key) => {
     if (!byName[key]) return;
-    stopPalmScroll();resetPointerDwell();
+    stopPalmScroll();handControls.commands.cancel();
     if (activeScreen === 'move' && key !== 'move' && app.running) { toast('Finish the active session before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.autoCalibration.active) { toast('Finish calibration before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.countdownActive) cancelCountdown();
-    const keepCameraForPointer=airPointer.enabled&&!airPointer.calibration;
-    if (activeScreen === 'move' && key !== 'move' && (app.stream || app.cameraAcquiring) && !keepCameraForPointer) {
+    const keepCameraForHands=handControls.enabled;
+    if (activeScreen === 'move' && key !== 'move' && (app.stream || app.cameraAcquiring) && !keepCameraForHands) {
       app.cameraRequest++; app.cameraAcquiring = false;
-      setPointerEnabled(false);if(airPointer.calibration)cancelPointerCalibration();
+      setHandControlsEnabled(false);
       app.stream?.getTracks().forEach((track) => track.stop()); app.stream = null; cancelAnimationFrame(app.raf); app.raf = 0;
       $('video').srcObject = null; $('video').style.display = 'none'; $('cameraEmpty').style.display = 'grid';
       $('trackingStatus').classList.remove('show'); cameraState('Camera off', 'neutral', 'Allow camera to check framing.', '0 joints');
@@ -1739,7 +1423,7 @@ $('authAction').onclick=async()=>{
   if(app.running||app.countdownActive||app.autoCalibration.active){toast('Finish the session or calibration before signing out.');return;}
   $('authAction').disabled=true;
   try {
-    setPointerEnabled(false);if(airPointer.calibration)cancelPointerCalibration();
+    setHandControlsEnabled(false);
     app.stream?.getTracks().forEach(track=>track.stop());
     authUser=null;activeDataScope='guest';lockAuthGate(true);$('authAction').hidden=true;
     await authSession.logout();
