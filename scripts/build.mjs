@@ -43,9 +43,9 @@ export function build(root=process.cwd(),env=process.env) {
   html=html.replace('</head>',`<meta name="formnote-release" content="${sha.replace(/[^a-z0-9-]/gi,'')}"></head>`);
   fs.writeFileSync(path.join(output,'index.html'),html);
   hashes['index.html']=crypto.createHash('sha256').update(html).digest('hex');
-  const release={commit:sha,worker:'steep-bush-dac6',auth:config,assets:hashes};
+  const release={commit:sha,worker:'physipeak',auth:config,assets:hashes};
   fs.writeFileSync(path.join(output,'release.json'),JSON.stringify(release,null,2));
-  console.log(`Built ${files.size} frontend files for steep-bush-dac6; Auth0 configuration is valid; release ${sha}.`);
+  console.log(`Built ${files.size} frontend files for physipeak; Auth0 configuration is valid; release ${sha}.`);
   return release;
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))build();

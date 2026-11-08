@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import {AuthSession,validateAuthConfig,safeReturnTo,cleanCallbackUrl,loadAuthSdk} from '../auth-flow.mjs';
 import {resolveConfig,requireCredentials,build} from '../scripts/build.mjs';
-const origin='https://steep-bush-dac6.smganeev.workers.dev';
+const origin='https://physipeak.smganeev.workers.dev';
 const config={domain:'dev-nq4wzkj35d08hmds.us.auth0.com',clientId:'kgZffBxFat1RgVYqMWY6Rgww7OiShO61'};
 function setup({user=null,callbackError=null,sessionError=null,returnTo='/#progress'}={}) {
   const calls=[];

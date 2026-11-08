@@ -4,12 +4,12 @@ import { createCompanion } from './companion.js';
 import { createCarePages } from './care-pages.js';
 import { WaveCounter } from './session-metrics.js';
 const waveCounter = new WaveCounter();
-import { assessPushup, PushupCounter } from './pushup.mjs';
 import { MovementCounter } from './movement-counter.mjs';
+import { assessPushup, PushupCounter } from './pushup.mjs';
 import { bodyReference, poseHandCrop, trackedHandCrop, restoreCroppedHand, PalmScrollController, classifyHandGesture, palmReading, FingerCommandHold } from './hand-controls.mjs';
 import { summarizePoseAngles } from './pose-calibration.mjs';
-const pushupCounter = new PushupCounter();
 const movementCounter = new MovementCounter();
+const pushupCounter = new PushupCounter();
 let pushupPose = null, pushupUiAt = 0;
 const $ = (id) => document.getElementById(id);
 const SESSION_KEY = 'formnote_sessions_v2';
@@ -50,7 +50,6 @@ const movements = {
     keys: ['shoulder', 'elbow', 'wrist'], frame: 'Face the camera · show both shoulders and the selected arm.',
     prompt: 'Sit comfortably facing the camera. Keep both shoulders visible and bring one relaxed arm across your chest.',
   },
-  pushup: { title:'Push-up · form demo', metric:'Elbow flexion', view:'side view', keys:['shoulder','elbow','wrist','hip','knee','ankle'], frame:'Side view · show your near-side arm, hip and legs.', prompt:'Place the camera side-on, at body height. Fit your whole body in view.' },
   wave: { title: 'Camera check · wave', metric: 'Arm landmarks', view: 'front view', keys: [], frame: 'Face camera · show shoulder, elbow, wrist.' },
 };
 const app = {
@@ -73,8 +72,7 @@ const saveSessions = (rows) => localStorage.setItem(scopedStorageKey(SESSION_KEY
 const readCalibrations = () => { try { return JSON.parse(localStorage.getItem(scopedStorageKey(CALIBRATION_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(CALIBRATION_KEY) : null) ?? '{}'); } catch { return {}; } };
 const saveCalibrations = (values) => localStorage.setItem(scopedStorageKey(CALIBRATION_KEY), JSON.stringify(values));
 const activeMovement = () => movements[$('exerciseSelect').value] || movements.sit;
-const pushupVariant = () => $('pushupVariant')?.value || 'floor';
-const calibrationKey = (movement = $('exerciseSelect').value, side = $('bodySide').value) => `${movement}${movement==='pushup'?`-${pushupVariant()}`:''}:${side}`;
+const calibrationKey = (movement = $('exerciseSelect').value, side = $('bodySide').value) => `${movement}:${side}`;
 const getCalibration = (movement, side) => readCalibrations()[calibrationKey(movement, side)];
 
 $('todayDate').textContent = new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -143,7 +141,7 @@ function movementAngle(world, movement, side) {
     return inside === null ? null : 180 - inside;
   }
   if (movement === 'reach') return angle3(point('hip'), point('shoulder'), point('elbow'));
-  if (movement === 'elbow' || movement === 'pushup') {
+  if (movement === 'elbow') {
     const inside = angle3(point('shoulder'), point('elbow'), point('wrist'));
     return inside === null ? null : 180 - inside;
   }
@@ -190,7 +188,6 @@ function readPose(landmarks, world) {
   if(handOnlyMode()){updateHandCameraStatus(performance.now());return false;}
   const movement = $('exerciseSelect').value;
   app.lastLandmarks = landmarks;
-  if (movement === 'pushup') return readPushupPose(landmarks, world);
   const visibility = pointsFor(movement, landmarks);
   app.poseReady = visibility.ready;
   if(app.countdownActive){$('startBtn').disabled=true;$('trackingTitle').textContent='Get ready';$('trackingCopy').textContent=`Step into view · ${app.countdownRemaining}s`;return visibility.ready;}
@@ -663,12 +660,12 @@ function monitor() {
                 : waveCounter.phase === 'moved' ? 'Bring your hand back toward where the wave started.'
                 : 'Move your raised hand sideways, then back. No need to cross your shoulder.';
             }
-          } else if (movement !== 'pushup' && app.currentAngle !== null) {
+          } else if (app.currentAngle !== null) {
             updateMovementCounter(landmarks, performance.now());
           }
         }
-        else if (app.running && !app.manual && $('exerciseSelect').value !== 'pushup' && $('exerciseSelect').value !== 'wave') movementCounter.interrupt();
-      } else { if($('exerciseSelect').value==='pushup'){pushupCounter.pause();showPushupWaiting('Step into view.');} if($('exerciseSelect').value!=='pushup'&&$('exerciseSelect').value!=='wave')movementCounter.interrupt(); resetAutoCalibrationHold('Tracking paused · show the selected joints; the hold will restart automatically.'); app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
+        else if (app.running && !app.manual && $('exerciseSelect').value !== 'wave') movementCounter.interrupt();
+      } else { movementCounter.interrupt(); resetAutoCalibrationHold('Tracking paused · show the selected joints; the hold will restart automatically.'); app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
       }
       if (app.running && !app.manual) companion?.observe({ ready: app.poseReady, angle: app.currentAngle, reps: app.reps, phase: app.phase });
     } catch (error) { console.warn('Pose estimate skipped', error); }
@@ -1216,7 +1213,6 @@ function buildAppScreens() {
   practiceLayout.append(movement, practiceAside); practiceAside.append(stats, calibration); byName.move.append(practiceLayout);
   const capture = document.createElement('button'); capture.type = 'button'; capture.className = 'secondary'; capture.id = 'capturePhoto'; capture.textContent = 'Capture photo'; capture.disabled = true; capture.title = 'Start a camera session to capture a photo.';
   $('cameraRequirement').before(capture);
-  buildPushupCoach();
   const checkinLayout = document.createElement('div'); checkinLayout.className = 'checkin-layout';
   checkinLayout.append(checkin, reflection); byName.checkin.append(checkinLayout);
 
@@ -1367,7 +1363,6 @@ async function renderMedia() {
   } catch (error) { console.warn('Local media storage unavailable', error); toast('Could not open local photo storage.'); }
 }
 const planExerciseCatalog=[
-  {id:'pushup',title:'Push-up',pattern:/\b(?:push[- ]?ups?|press[- ]?ups?)\b/i},
   {id:'sit',title:'Sit-to-stand',pattern:/\b(?:sit[- ]?to[- ]?stands?|chair rises?)\b/i},
   {id:'reach',title:'Overhead reach',pattern:/\b(?:overhead reach|shoulder flexion|arm raises?)\b/i},
   {id:'crossbody',title:'Across-the-torso seated arm stretch',pattern:/\b(?:across[- ]the[- ]torso|across[- ]the[- ]chest|across[- ]the[- ]body|cross[- ]body|seated arm stretch)\b/i},

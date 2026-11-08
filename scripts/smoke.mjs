@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import {resolveConfig} from './build.mjs';
-const origin='https://steep-bush-dac6.smganeev.workers.dev';
+const origin='https://physipeak.smganeev.workers.dev';
 const expected=JSON.parse(await fs.readFile('dist/release.json','utf8'));
 async function get(path) {
   const response=await fetch(`${origin}/${path}?release=${encodeURIComponent(expected.commit)}&check=${Date.now()}`,{cache:'no-store',signal:AbortSignal.timeout(15000)});

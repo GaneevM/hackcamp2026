@@ -54,7 +54,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --name steep-bush-dac6
+          command: deploy --name physipeak
       - name: Verify live assets and authentication configuration
         run: node scripts/smoke.mjs
       - name: Deployment status
@@ -63,6 +63,6 @@ jobs:
           JOB_STATUS: ${{ job.status }}
         run: |
           echo "Deployment status: $JOB_STATUS" >> "$GITHUB_STEP_SUMMARY"
-          echo "Worker: steep-bush-dac6" >> "$GITHUB_STEP_SUMMARY"
+          echo "Worker: physipeak" >> "$GITHUB_STEP_SUMMARY"
           echo "Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           echo "A release is verified only when publishing AND the live smoke check pass." >> "$GITHUB_STEP_SUMMARY"

@@ -80,7 +80,7 @@ export function createCarePages(options){
    $('homeGreeting').textContent=options.getName()?`WELCOME BACK, ${options.getName().split(' ')[0].toUpperCase()}`:'WELCOME TO PHYSIPEAK';
    home.querySelector('.welcome h1').textContent='The peak of physiotherapy.';
    home.querySelector('.welcome p').textContent='Your own pace. Your own route to the summit.';
-   const movementNames={sit:'Sit-to-stand',reach:'Overhead reach',elbow:'Elbow bend',crossbody:'Across-the-body stretch',pushup:'Push-up',wave:'Camera check'};
+   const movementNames={sit:'Sit-to-stand',reach:'Overhead reach',elbow:'Elbow bend',crossbody:'Across-the-body stretch',wave:'Camera check'};
    $('homeExercise').textContent=movementNames[options.getMovement?.()]||'Choose a movement';
    $('homePlanCopy').textContent=plan.instructions||((Number(plan.reps)>0)?`Your saved goal: ${plan.reps} reps per session.`:'Your physio’s instructions will appear here after you add a plan.');
    $('homeGoalTitle').textContent=plan.diagnosis||'Set a goal with your physiotherapist';

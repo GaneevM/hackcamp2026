@@ -46,7 +46,7 @@ Formnote's sign-in screen offers **Continue with Google**, **Sign in with email*
 3. Open its **Settings** tab and add these origins to **Allowed Callback URLs**, **Allowed Logout URLs** and **Allowed Web Origins**, then save:
    - `http://localhost:3001` (integrated app and backend)
    - `http://localhost:4173` (static-only preview)
-   - `https://steep-bush-dac6.smganeev.workers.dev`
+   - `https://physipeak.smganeev.workers.dev`
 4. Copy the **Domain** (no `https://`) and **Client ID**. Both are public. Never put the Client Secret in this repository.
 
 ### 2. Turn on email and password
@@ -74,7 +74,7 @@ Formnote's sign-in screen offers **Continue with Google**, **Sign in with email*
 
 ## Deploy to the existing Cloudflare Worker
 
-`wrangler.jsonc` publishes the generated `dist/` bundle to the existing Worker `steep-bush-dac6`. The GitHub Actions workflow deploys on changes to the root app files in `main` and can also be started manually. Missing Cloudflare secrets fail the deployment. Auth0 configuration is validated before publishing. See [the deployment checklist](AUTH-DEPLOYMENT.md).
+`wrangler.jsonc` publishes the generated `dist/` bundle to the existing Worker `physipeak`. The GitHub Actions workflow deploys on changes to the root app files in `main` and can also be started manually. Missing Cloudflare secrets fail the deployment. Auth0 configuration is validated before publishing. See [the deployment checklist](AUTH-DEPLOYMENT.md).
 
 In **GitHub → Settings → Secrets and variables → Actions**, add:
 

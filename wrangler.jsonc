@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "steep-bush-dac6",
+  "name": "physipeak",
   "compatibility_date": "2026-11-07",
   "assets": {
     "directory": "./dist",
