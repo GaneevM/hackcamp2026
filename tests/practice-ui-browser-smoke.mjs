@@ -28,6 +28,18 @@ try{
  await page.screenshot({path:path.join(os.tmpdir(),'physipeak-home-updated.png')});
  assert.ok(await page.locator('.home-dashboard').evaluate(n=>n.getBoundingClientRect().top>=innerHeight-10));
  assert.ok(await page.locator('.brand .official-logo').evaluate(n=>n.complete&&n.naturalWidth>0));
+ await page.locator('.sidebar .nav [data-screen="reports"]').click();
+ assert.equal(await page.locator('#screen-reports').isVisible(),true);
+ assert.equal(await page.locator('#screen-reports .care-visit-layout').isVisible(),true);
+ assert.equal(await page.locator('#careHistoryPanel').isVisible(),false);
+ assert.equal(await page.locator('.sidebar .nav [data-screen="progress"]').count(),0);
+ await page.locator('.sidebar .nav [data-screen="plan"]').click();
+ assert.equal(await page.locator('#screen-plan .care-visit-layout').count(),0);
+ await page.goto('http://127.0.0.1:'+server.address().port+'/#progress');
+ await page.waitForFunction(()=>window.uiFixture&&document.getElementById('authGate').hidden);
+ assert.equal(await page.locator('#screen-reports').isVisible(),true);
+ assert.equal(new URL(page.url()).hash,'#reports');
+ await page.locator('.sidebar .nav [data-screen="home"]').click();
  await page.screenshot({path:path.join(os.tmpdir(),'physipeak-home-updated.png')});
  await page.locator('.sidebar .nav [data-screen="move"]').click();
  assert.equal(await page.locator('#repGoal').isVisible(),false);

@@ -1193,8 +1193,8 @@ function buildAppScreens() {
   const screens = [
     ['home', 'Home', 'The peak of physiotherapy.'],
     ['move', 'Practice', 'Choose an exercise from your care plan.'],
-    ['plan', 'My Plan', 'Your diagnosis, exercise instructions and therapist report.'],
-    ['progress', 'Progress', 'Review your movement and sessions over time.'],
+    ['plan', 'My Plan', 'Your diagnosis and exercise instructions.'],
+    ['reports', 'Gemini Reports', 'Review your sessions and prepare a progress report for your physiotherapist.'],
     ['checkin', 'Check-in', 'A quick record of how you feel.'],
     ['visit', 'Visit note', 'Review and prepare a report for your therapist.'],
     ['profile', 'Profile', 'Your account and camera controls.'],
@@ -1214,7 +1214,7 @@ function buildAppScreens() {
   homeDashboard.innerHTML = '<section class="home-today-plan"><div class="home-panel-head"><h2>Today’s Plan</h2><span id="homePlanTiming">Your saved plan</span></div><div class="home-today-body"><span class="today-plan-step">TODAY</span><div><strong id="homeExercise">Choose a movement</strong><p id="homePlanCopy">Add your physiotherapist’s instructions in My Plan.</p></div></div><div class="home-plan-note" id="homePlanNote">Choose an exercise from your own care plan. No exercise is prescribed by the app.</div><div class="home-plan-notice-slot"></div><button class="home-plan-link" type="button" data-open-screen="plan">Review my plan <span aria-hidden="true">→</span></button></section><div class="home-side-panels"><section class="home-progress-mount" id="homeProgressMount"><h2>Your Progress</h2></section><section class="home-last-mount" id="homeLastMount"><h2>Last Session</h2></section></div></div>';
   const homePhotos = document.createElement('section'); homePhotos.className = 'home-photos'; homePhotos.id = 'homePhotosMount';
   const homeLinks = document.createElement('div'); homeLinks.className = 'home-links';
-  homeLinks.innerHTML = '<button class="home-link" type="button" data-open-screen="checkin"><span>How did today feel?</span><span aria-hidden="true">→</span></button><button class="home-link" type="button" data-open-screen="progress"><span>View your progress</span><span aria-hidden="true">→</span></button>';
+  homeLinks.innerHTML = '<button class="home-link" type="button" data-open-screen="checkin"><span>How did today feel?</span><span aria-hidden="true">→</span></button><button class="home-link" type="button" data-open-screen="reports"><span>Gemini progress report</span><span aria-hidden="true">→</span></button>';
   const opening=document.createElement('div');opening.className='home-opening';opening.append(homeFocus,homeGoalRow);
   byName.home.append(welcome, opening, homeDashboard, homePhotos, homeLinks);
   homeDashboard.querySelector('.home-plan-notice-slot').append(notice);
@@ -1234,31 +1234,31 @@ function buildAppScreens() {
   const progressLayout = document.createElement('div'); progressLayout.className = 'progress-layout';
   const progressMain = document.createElement('div'); progressMain.className = 'progress-main';
   const progressAside = document.createElement('aside'); progressAside.className = 'progress-aside';
-  progressLayout.append(progressMain, progressAside); progressMain.append(progress, recent); byName.progress.append(progressLayout);
+  progressLayout.append(progressMain, progressAside); progressMain.append(progress, recent); const legacyProgress=document.createElement('div');legacyProgress.className='legacy-progress';legacyProgress.hidden=true;legacyProgress.append(progressLayout);byName.reports.append(legacyProgress);
   const progressTools = document.createElement('div'); progressTools.className = 'progress-tools';
   progressTools.innerHTML = `<section class="card panel"><div class="panel-top"><div><h2>My physiotherapy plan</h2><p>Upload the paper your physio gave you. Review the extracted details before saving.</p></div></div><div class="upload-row plan-upload-primary"><label class="primary upload-button" for="diagnosisFile">Upload diagnosis</label><input id="diagnosisFile" type="file" accept="application/pdf,image/*" hidden><span class="upload-hint">PDF or photo · scanned on this device</span></div><div id="scanStatus" class="scan-status" role="status" aria-live="polite"></div><form id="physioPlanForm" class="plan-form"><label>Diagnosis or focus<input id="planDiagnosis" maxlength="120" placeholder="Shown after scanning, or enter it here"></label><label>Instructions from your physio<textarea id="planInstructions" maxlength="500" placeholder="Movement, sets, reps, precautions"></textarea></label><section class="plan-exercise-review" id="planExerciseReview" hidden><div><h3>Exercises found in the paper</h3><p id="planExerciseHint">Check the scan and select only the exercises your physiotherapist prescribed.</p></div><div id="planExerciseOptions" class="plan-exercise-options"></div></section><div class="plan-grid"><label>Sessions per week<input id="planSessions" type="number" min="0" max="14" placeholder="e.g. 3"></label><label>Reps per session<input id="planReps" type="number" min="0" max="200" placeholder="e.g. 8"></label></div><button class="primary" type="submit">Save plan</button><div class="plan-summary" id="planSummary" aria-live="polite"></div><p class="fine-print">Confirm every detail against your paper. Only selected exercises appear first in Practice; the app does not prescribe movements.</p></form><details id="scanReview" class="scan-review" hidden><summary>Review all text found on the paper</summary><textarea id="scanText" readonly></textarea><button type="button" id="applyScan" class="secondary">Fill plan fields from paper</button></details><div id="documentList" class="media-list"></div></section><section class="card panel"><div class="panel-top"><div><h2>Session photos</h2><p>Review photos you chose to save during practice.</p></div><span class="optional">Private to this device</span></div><p class="fine-print">Video is not saved. A photo is stored only when you capture it.</p><div id="photoGallery" class="photo-gallery"><div class="media-empty">No session photos yet.</div></div></section>`;
   const planPanel = progressTools.children[0]; const photosPanel = progressTools.children[1];
-  byName.plan.append(planPanel, report);
+  byName.plan.append(planPanel);byName.reports.append(report);
   homePhotos.append(photosPanel);
 
   const progressTotals = document.createElement('div'); progressTotals.className = 'record-totals'; progressTotals.id = 'recordTotals';
   const measurement = document.createElement('div'); measurement.className = 'measurement-picker';
   measurement.innerHTML = '<label for="progressMovement">Movement</label><select id="progressMovement" aria-label="Progress movement">'+$('exerciseSelect').innerHTML+'</select><label for="progressSide">Side</label><select id="progressSide" aria-label="Progress body side">'+$('bodySide').innerHTML+'</select>';
-  byName.progress.insertBefore(progressTotals, progressLayout); byName.progress.insertBefore(measurement, progressLayout);
-  const disclaimerSlot = document.createElement('div'); disclaimerSlot.className = 'progress-disclaimer'; disclaimerSlot.append(disclaimer); byName.progress.append(disclaimerSlot);
+  legacyProgress.prepend(progressTotals,measurement);
+  const disclaimerSlot = document.createElement('div'); disclaimerSlot.className = 'progress-disclaimer'; disclaimerSlot.append(disclaimer); legacyProgress.append(disclaimerSlot);
   [['progressMovement','exerciseSelect'],['progressSide','bodySide']].forEach(([progressId, practiceId]) => {
     $(progressId).addEventListener('change', () => { $(practiceId).value = $(progressId).value; $(practiceId).dispatchEvent(new Event('change')); });
   });
   const week = document.createElement('section'); week.className = 'week-journal'; week.innerHTML = '<div class="week-heading"><h2>Your week</h2><span id="weekCount"></span></div><div class="week-days" id="weekDays"></div>';
   byName.home.append(week);
 
-  const navPaths = { home:'M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9', move:'m8 5 4-2 3 4 5 2M12 4l-2 8 5 3 2 6M10 12l-5 8M4 10l5-2', plan:'M6 3h9l4 4v14H6ZM14 3v5h5M9 12h7M9 16h7', progress:'M4 3v17h17M7 14l4-4 4 2 5-7', profile:'M20 21a8 8 0 0 0-16 0M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', checkin:'M12 20S3 15 3 8a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 7-9 12-9 12Z', visit:'M6 3h9l4 4v14H6ZM14 3v5h5M9 12h7M9 16h7' };
+  const navPaths = { home:'M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9', move:'m8 5 4-2 3 4 5 2M12 4l-2 8 5 3 2 6M10 12l-5 8M4 10l5-2', plan:'M6 3h9l4 4v14H6ZM14 3v5h5M9 12h7M9 16h7', reports:'M6 3h9l4 4v14H6ZM14 3v5h5M9 12h7M9 16h7', profile:'M20 21a8 8 0 0 0-16 0M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', checkin:'M12 20S3 15 3 8a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 7-9 12-9 12Z', visit:'M6 3h9l4 4v14H6ZM14 3v5h5M9 12h7M9 16h7' };
   document.querySelectorAll('.nav button, .mobile-nav button').forEach(button => {
     const icon = button.querySelector('span'); if (icon && navPaths[button.dataset.screen]) icon.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="'+navPaths[button.dataset.screen]+'"/></svg>';
   });
   const visitGuide = document.createElement('section'); visitGuide.className = 'visit-guide';
   visitGuide.innerHTML = '<div class="visit-guide-icon">✳</div><div><b>Your note stays private.</b><p>Review it, then copy or download to share.</p></div>';
-  byName.plan.append(visitGuide);
+  byName.reports.append(visitGuide);
   content.querySelector('.layout')?.remove(); content.querySelector('.lower')?.remove();
 
   const profileCard = document.createElement('section'); profileCard.className = 'profile-card card';
@@ -1269,7 +1269,7 @@ function buildAppScreens() {
 
   let activeScreen = 'home';
   const switchTo = (requestedKey) => {
-    const key = requestedKey === 'visit' ? 'plan' : requestedKey;
+    const key = ['visit','progress'].includes(requestedKey) ? 'reports' : requestedKey;
     if (!byName[key]) return;
     stopPalmScroll(); handControls.commands.cancel();resetHandMenuMotion();
     if (activeScreen === 'move' && key !== 'move' && app.running) { toast('Finish the active session before leaving Practice.'); return; }
@@ -1310,7 +1310,8 @@ function buildAppScreens() {
     else cameraState('Finding your position', 'neutral', 'Step into view. The session will start when your joints are visible.');
   });
   const initial = location.hash.slice(1);
-  switchTo(byName[initial] ? initial : 'home');
+  switchTo(byName[initial] || ['visit','progress'].includes(initial) ? initial : 'home');
+  window.addEventListener('hashchange',()=>switchTo(location.hash.slice(1)));
   return { switchTo, screens: byName };
 }
 function renderJournalOverview(rows) {

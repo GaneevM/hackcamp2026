@@ -240,11 +240,11 @@ button, input, select, textarea { font-family: var(--font-ui); }
 .plan-exercise-option strong { color: var(--ink); font-size: 12px; }
 .plan-exercise-option small { color: var(--muted); font-size: 10px; font-weight: 450; }
 .screen-plan .upload-button { background: var(--navy); color: #fff; }
-.screen-plan .care-visit-layout { display: grid; gap: 15px; margin-top: 16px; }
-.screen-plan .care-visit-layout .care-panel { border: 1px solid #E5E9ED; border-radius: 12px; background: #fff; }
-.screen-plan .care-visit-layout > .care-ai-sharing { border: 1px solid #E5E9ED; border-radius: 12px; background: #fff; box-shadow: none; }
-.screen-plan .gemini-intro h2 { color: var(--ink); }
-.screen-plan .care-note-panel { margin-top: 0; }
+.screen-reports .care-visit-layout { display: grid; gap: 15px; margin-top: 16px; }
+.screen-reports .care-visit-layout .care-panel { border: 1px solid #E5E9ED; border-radius: 12px; background: #fff; }
+.screen-reports .care-visit-layout > .care-ai-sharing { border: 1px solid #E5E9ED; border-radius: 12px; background: #fff; box-shadow: none; }
+.screen-reports .gemini-intro h2 { color: var(--ink); }
+.screen-reports .care-note-panel { margin-top: 0; }
 .screen-progress .care-history, .screen-progress .care-panel { border-radius: 12px; }
 .screen-progress .care-history-panel { margin: 0; }
 .screen-progress .record-totals { margin-bottom: 12px; }

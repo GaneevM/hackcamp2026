@@ -477,7 +477,7 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 @media print {
  body.care-print { background:white!important; }
  body.care-print .sidebar,body.care-print .topbar,body.care-print .mobile-nav,body.care-print .care-selection,body.care-print .care-note-panel>.care-section-head,body.care-print .care-note-panel>.care-actions,body.care-print #careNoteStatus,body.care-print .visit-guide,body.care-print .footer-disclaimer,body.care-print .screen-heading { display:none!important; }
- body.care-print .app,body.care-print .main,body.care-print .content,body.care-print .care-visit-layout,body.care-print #screen-visit { display:block!important; width:100%!important; max-width:none!important; margin:0!important; padding:0!important; }
+ body.care-print .app,body.care-print .main,body.care-print .content,body.care-print .care-visit-layout,body.care-print #screen-reports { display:block!important; width:100%!important; max-width:none!important; margin:0!important; padding:0!important; }
  body.care-print .care-note-panel { border:0!important; padding:0!important; box-shadow:none!important; }
  body.care-print #careVisitDocument { display:block!important; color:black; }
  body.care-print .care-table-wrap { overflow:visible; }.care-table tr { break-inside:avoid; }
