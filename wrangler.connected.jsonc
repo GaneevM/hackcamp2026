@@ -1,0 +1,30 @@
+{
+  "$schema": "./server/node_modules/wrangler/config-schema.json",
+  "name": "physipeak",
+  "main": "server/worker/index.js",
+  "compatibility_date": "2026-11-07",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/api/*",
+      "/health",
+      "/auth0-config.js"
+    ]
+  },
+  "vars": {
+    "AUTH0_DOMAIN": "dev-nq4wzkj35d08hmds.us.auth0.com",
+    "AUTH0_CLIENT_ID": "kgZffBxFat1RgVYqMWY6Rgww7OiShO61",
+    "AUTH0_AUDIENCE": "https://physipeak-api",
+    "GEMINI_MODEL": "gemini-3.5-flash-lite"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "formnote-journal",
+      "database_id": "8bdf26bf-ce9b-4414-9dae-520419c1bdaf"
+    }
+  ],
+  "account_id": "c7381e03d94d43a54e2ee57899416e4a"
+}

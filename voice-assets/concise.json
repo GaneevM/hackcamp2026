@@ -1,0 +1,25 @@
+{
+  "mode": "concise",
+  "voice": "Kore",
+  "model": "gemini-2.5-flash-preview-tts",
+  "clips": {
+    "session_started": {
+      "text": "Session started.",
+      "fileName": "4163cc486e666740ca6754f9e07b8d907e442b8d2ead5e9d9bde6ba9b749b21c.wav"
+    },
+    "rep_completed": null,
+    "tracking_lost": null,
+    "tracking_restored": {
+      "text": "Tracking restored.",
+      "fileName": "33829dc1aea4c7d08a085bb397001e989835cd1397bd273f98eb9f924834d2a0.wav"
+    },
+    "session_ended": {
+      "text": "Session ended.",
+      "fileName": "1b1affc24223981e485b1f0752a8d2b9f09a6fc8283ea1cdeab5e7789c78542c.wav"
+    },
+    "question_goal": null,
+    "question_tracking": null,
+    "question_cycle": null,
+    "question_general": null
+  }
+}

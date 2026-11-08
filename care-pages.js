@@ -1,3 +1,4 @@
+import { apiHeaders } from './api-client.js';
 import {escapeText as esc, dateKey, practiceRows, filterHistory, historySummary, sessionCsv, angleSeries} from './care-data.js';
 const $=id=>document.getElementById(id);
 const date=value=>new Date(value).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
@@ -9,14 +10,14 @@ const stat=(value,label,detail='')=>`<article class="care-stat"><strong>${esc(va
 export function createCarePages(options){
  let scope=options.getScope(), records=[],insights=[],selected=new Set(), selectionTouched=false, busy=false, preview=null, current=null, loadVersion=0;
  let filter={movement:'all',side:'all',days:30};
- const home=$('screen-home'),checkin=$('screen-checkin'),progress=$('screen-progress'),visit=$('screen-visit');
- home.classList.add('care-home');checkin.classList.add('care-checkin');progress.classList.add('care-progress');visit.classList.add('care-visit');
+  const home=$('screen-home'),checkin=$('screen-checkin'),planPage=$('screen-plan'),progress=$('screen-progress'),visit=$('screen-visit');
+  home.classList.add('care-home');checkin.classList.add('care-checkin');planPage.classList.add('care-plan');progress.classList.add('care-progress');visit.classList.add('care-visit');
  const existingHero=home.querySelector('.home-focus');existingHero.classList.add('care-hero');
  existingHero.classList.add('care-choice-hero');
  if(!existingHero.querySelector('.home-focus-copy')) existingHero.innerHTML = '<div class="home-choice-copy"><span class="home-kicker">YOUR PRACTICE · YOUR CHOICE</span><h2 id="homeExercise">Choose your movement.</h2><p id="homePlanCopy">Pick the exercise from your own care plan.</p><div class="home-movement-choices"><button type="button" data-home-movement="sit"><span aria-hidden="true">↕</span><strong>Sit-to-stand</strong><small>Knee movement</small></button><button type="button" data-home-movement="reach"><span aria-hidden="true">↗</span><strong>Overhead reach</strong><small>Shoulder movement</small></button><button type="button" data-home-movement="elbow"><span aria-hidden="true">⌁</span><strong>Elbow bend</strong><small>Elbow movement</small></button></div><p class="home-choice-note">Choose a movement to open its camera setup. Nothing starts automatically.</p></div>';
  existingHero.querySelectorAll('[data-home-movement]').forEach(button=>button.onclick=()=>options.chooseMovement(button.dataset.homeMovement));
- const homeStats=document.createElement('div');homeStats.className='care-stats';homeStats.id='careHomeStats';existingHero.after(homeStats);
- const homeRecent=document.createElement('section');homeRecent.className='card care-panel';homeRecent.id='careHomeRecent';home.append(homeRecent);
+  const homeStats=document.createElement('div');homeStats.className='care-stats';homeStats.id='careHomeStats';$('homeProgressMount').append(homeStats);
+  const homeRecent=document.createElement('section');homeRecent.className='card care-panel';homeRecent.id='careHomeRecent';$('homeLastMount').append(homeRecent);
  const checkinIntro=document.createElement('section');checkinIntro.className='care-intro';checkinIntro.innerHTML='<span class="care-kicker">A small pause for you</span><h2>Numbers tell part of the story.<br>How you feel matters, too.</h2><p>Answer what feels useful. Nothing is sent to Gemini or your physiotherapist when you save a check-in.</p>';
  $('checkin').before(checkinIntro);
  $('checkin').querySelector('.checkin-intro').textContent='All fields are optional. Save at least one rating or note.';
@@ -25,14 +26,16 @@ export function createCarePages(options){
  const checkinHistory=document.createElement('section');checkinHistory.className='card care-panel';checkinHistory.id='careCheckinHistory';checkin.append(checkinHistory);
  const resetCheckin=document.createElement('button');resetCheckin.className='quiet';resetCheckin.type='button';resetCheckin.textContent='Clear answers';$('saveCheckin').after(resetCheckin);resetCheckin.onclick=options.clearCheckin;
 
- // Preserve existing data tools and their handlers, but replace the progress presentation.
+  // Keep the diagnosis editor and saved photos on their requested screens.
  $('progress').hidden=true; $('recentSessions').hidden=true;
  const historyPanel=document.createElement('section');historyPanel.className='card care-panel';historyPanel.id='careHistoryPanel';
  historyPanel.innerHTML=`<div class="care-section-head"><div><span class="care-kicker">Your history, in perspective</span><h2>Keep track of showing up.</h2></div><button type="button" class="secondary" id="careExport">Export CSV</button></div>
  <div class="care-filters"><label>Exercise<select id="careExercise"><option value="all">All exercises · repetitions</option><option value="sit">Sit-to-stand</option><option value="reach">Overhead reach</option><option value="elbow">Elbow bend</option></select></label><label>Body side<select id="careSide"><option value="all">Both sides</option><option value="left">Left</option><option value="right">Right</option></select></label><label>Period<select id="carePeriod"><option value="7">Past 7 days</option><option value="30" selected>Past 30 days</option><option value="0">All history</option></select></label></div>
  <div class="care-stats" id="careProgressStats"></div><div id="careChart"></div><p class="care-muted">Counts describe recorded practice. Camera angles are estimates; changes do not establish recovery.</p><div id="careHistory"></div>`;
  progress.querySelector('.screen-heading').after(historyPanel);
- const support=document.createElement('details');support.className='card care-panel care-support';support.innerHTML='<summary>My plan, documents & session photos</summary>';const tools=progress.querySelector('.progress-tools');if(tools){support.append(tools);progress.append(support);}
+  const planPanel=$('physioPlanForm').closest('.card'),photosPanel=$('photoGallery').closest('.card');
+  if(planPanel&&!planPage.contains(planPanel))planPage.append(planPanel);
+  if(photosPanel&&!$('homePhotosMount').contains(photosPanel))$('homePhotosMount').append(photosPanel);
  const deleteAction=$('clearHistory');deleteAction.textContent='Clear sessions, check-ins & AI drafts';deleteAction.className='quiet';progress.append(deleteAction);
  $('careExercise').onchange=()=>{filter.movement=$('careExercise').value;renderProgress();};
  $('careSide').onchange=()=>{filter.side=$('careSide').value;renderProgress();};
@@ -50,7 +53,7 @@ export function createCarePages(options){
  </section>
  <div id="careQuestion" hidden></div><details class="care-saved"><summary>Saved Gemini drafts & questions</summary><div id="careSavedInsights"></div></details></section>
  <section class="card care-panel care-note-panel"><div class="care-section-head"><div><span class="care-kicker">3 · Review before sharing</span><h2>Your visit note</h2></div>${badge('Private until you share')}</div><div class="care-actions"><button type="button" class="primary" id="carePrint">Print / save PDF</button><button type="button" class="secondary" id="careCopy">Copy note</button><button type="button" class="quiet" id="careLocal">Use local note</button></div><div id="careVisitDocument"></div><p class="care-muted" id="careNoteStatus" role="status"></p></section>`;
- visit.querySelector('.screen-heading').after(visitPanel);
+  planPage.append(visitPanel);
  visitPanel.prepend(visitPanel.querySelector('.care-ai-sharing'));
  $('careIncludeContext').onchange=invalidatePreview;
  $('careReviewSharing').onclick=reviewSharing;
@@ -61,7 +64,7 @@ export function createCarePages(options){
  window.addEventListener('afterprint',()=>document.body.classList.remove('care-print'));
  $('careCopy').onclick=async()=>{try{await navigator.clipboard.writeText($('careVisitDocument').innerText);$('careNoteStatus').textContent='Note copied. Review it before sharing.';}catch{$('careNoteStatus').textContent='Clipboard is unavailable. Use Print / save PDF instead.';}};
 
- async function request(path,body){const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(45000)});const type=response.headers.get('content-type')||'';if(!type.includes('json'))throw Error('Start the backend and open localhost:3001 to use saved-session insights.');const data=await response.json();if(!response.ok)throw Error(data.error||'Request failed.');return data;}
+ async function request(path,body){const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:await apiHeaders(),...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(45000)});const type=response.headers.get('content-type')||'';if(!type.includes('json'))throw Error('The session server is unavailable. Refresh the page or try again shortly.');const data=await response.json();if(!response.ok)throw Error(data.error||'Request failed.');return data;}
  function download(name,text,type){const url=URL.createObjectURL(new Blob([text],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
  function chosen(){return practiceRows(options.getRows()).filter(r=>selected.has(r.id));}
  function invalidatePreview(){preview=null;$('careSharePreview').hidden=true;$('careConsent').checked=false;syncActions();}
@@ -74,15 +77,24 @@ export function createCarePages(options){
  function renderHome(){
   const data=historySummary(options.getRows()),plan=options.getPlan(), target=Number(plan.sessions)||0;
   if(!home.hidden)document.querySelector('.breadcrumb b').textContent='Home';
-  home.querySelector('.welcome h1').textContent=options.getName()?`Good to see you, ${options.getName().split(' ')[0]}.`:'Make room for a little movement.';
-  home.querySelector('.welcome p').textContent='Your practice, your observations, your next conversation.';
-  $('homeExercise').textContent='Choose your movement.';
-  $('homePlanCopy').textContent=Number(plan.reps)>0?`Your saved plan: ${plan.reps} reps per session. Choose the movement you want to practise.`:'Choose a movement from your own care plan. There is no exercise selected for you.';
+   $('homeGreeting').textContent=options.getName()?`WELCOME BACK, ${options.getName().split(' ')[0].toUpperCase()}`:'WELCOME TO PHYSIPEAK';
+   home.querySelector('.welcome h1').textContent='The peak of physiotherapy.';
+   home.querySelector('.welcome p').textContent='Your own pace. Your own route to the summit.';
+   const movementNames={sit:'Sit-to-stand',reach:'Overhead reach',elbow:'Elbow bend',crossbody:'Across-the-body stretch',pushup:'Push-up',wave:'Camera check'};
+   $('homeExercise').textContent=movementNames[options.getMovement?.()]||'Choose a movement';
+   $('homePlanCopy').textContent=plan.instructions||((Number(plan.reps)>0)?`Your saved goal: ${plan.reps} reps per session.`:'Your physio’s instructions will appear here after you add a plan.');
+   $('homeGoalTitle').textContent=plan.diagnosis||'Set a goal with your physiotherapist';
+   $('homeGoalDetail').textContent=Number(plan.reps)>0?`${plan.reps} reps per session${target?` · ${target} sessions per week`:''}`:(plan.instructions||'Upload your diagnosis paper to add your care plan.');
+   const weeklyPercent=target?Math.min(100,Math.round(data.week.length/target*100)):0;
+   $('homeGoalProgress').textContent=target?`${weeklyPercent}%`:'—';
+   $('goalProgressRing').style.setProperty('--goal-fill',`${weeklyPercent*3.6}deg`);
+   $('homePlanTiming').textContent=target?`${data.week.length} of ${target} sessions this week`:'Your saved plan';
+   $('homePlanNote').textContent=plan.instructions||'Add your physiotherapist’s instructions in My Plan. The app does not prescribe movements.';
   homeStats.innerHTML=stat(data.week.length,'Sessions · past 7 days',target?`of ${target} in your saved plan`:'No weekly goal entered')+stat(data.practiceDays,'Practice days','in the past 7 days')+stat(data.latestPain??'—','Latest pain rating','self-reported · out of 10');
   const last=data.latest;
-  $('careHomeRecent').innerHTML=`<div class="care-section-head"><div><span class="care-kicker">Pick up where you left off</span><h2>${last?'Your last recorded session':'Your story starts here'}</h2></div></div>${last?`<div class="care-latest"><span class="care-latest-count">${last.reps}<small>reps</small></span><div><h3>${esc(last.exercise)}</h3><p>${date(last.date)} · ${esc(last.side)} side · ${last.manual?'manual log':'camera estimates'}</p></div><button type="button" class="secondary" id="careReviewLatest">Review session →</button></div>`:'<p class="care-muted">Try a session, record how it felt, and bring a clearer picture to your next visit. Your journal stays local until you choose to share.</p>'}`;
+  $('careHomeRecent').innerHTML=last?`<div class="care-latest"><span class="care-latest-count">${last.reps}<small>reps</small></span><div><h3>${esc(last.exercise)}</h3><p>${date(last.date)} · ${esc(last.side)} side · ${last.manual?'manual log':'camera estimates'}</p></div><button type="button" class="secondary" id="careReviewLatest">Review session →</button></div>`:'<p class="care-muted">Try a session, record how it felt, and bring a clearer picture to your next visit. Your journal stays local until you choose to share.</p>';
   if($('careReviewLatest'))$('careReviewLatest').onclick=()=>openVisit(last.id);
-  $('planNoticeText').textContent=plan.instructions||'Follow your own care plan. Set your targets in Progress → My plan.';
+   $('planNoticeText').textContent=plan.instructions||'No exercise is prescribed yet. Add the instructions from your physiotherapist in My Plan.';
  }
  function renderCheckins(){const rows=options.getRows().filter(r=>r.checkin).sort((a,b)=>new Date(b.date)-new Date(a.date));$('careCheckinHistory').innerHTML='<span class="care-kicker">In your own words</span><h2>Recent check-ins</h2>'+(rows.length?rows.slice(0,5).map(r=>`<article class="care-checkin-entry"><div><strong>${date(r.date)}</strong>${badge('Self-reported')}</div><p>Pain ${number(r.pain)}/10 · Confidence ${number(r.confidence)}/5</p>${r.note?`<blockquote>${esc(r.note)}</blockquote>`:''}</article>`).join(''):'<p class="care-muted">Your saved check-ins will appear here. Unanswered ratings stay unknown, not zero.</p>');}
  function renderProgress(){
@@ -141,5 +153,5 @@ export function createCarePages(options){
  }
  function openVisit(id){if(id){selectionTouched=true;selected=new Set([id]);current=null;invalidatePreview();}options.navigate('visit');render();reload();}
  render();reload();
- return {render,reload,openVisit,reset(){loadVersion++;records=[];insights=[];current=null;selectionTouched=false;selected.clear();invalidatePreview();$('careQuestion').hidden=true;render();},async saveCheckin(row){const thisScope=options.getScope();try{await request('/api/journal/checkins',{scope:thisScope,checkin:row});if(thisScope===options.getScope())$('checkinFeedback').textContent='Saved on this browser and in local SQLite.';}catch{if(thisScope===options.getScope())$('checkinFeedback').textContent='Saved on this browser. Backend sync unavailable.';}}};
+ return {render,reload,openVisit,reset(){loadVersion++;records=[];insights=[];current=null;selectionTouched=false;selected.clear();invalidatePreview();$('careQuestion').hidden=true;render();},async saveCheckin(row){const thisScope=options.getScope();try{await request('/api/journal/checkins',{scope:thisScope,checkin:row});if(thisScope===options.getScope())$('checkinFeedback').textContent='Saved on this browser and synced to your journal.';}catch{if(thisScope===options.getScope())$('checkinFeedback').textContent='Saved on this browser. Backend sync unavailable.';}}};
 }

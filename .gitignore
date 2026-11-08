@@ -4,3 +4,8 @@ dist/
 
 # Local SQLite databases
 /server/data/
+
+# Local Cloudflare state and private development settings
+.wrangler/
+.dev.vars
+.dev.vars.*

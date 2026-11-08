@@ -1,0 +1,40 @@
+{
+  "mode": "encouraging",
+  "voice": "Kore",
+  "model": "gemini-2.5-flash-preview-tts",
+  "clips": {
+    "session_started": {
+      "text": "Your session has started. You can pause whenever you need.",
+      "fileName": "b7f7a89bcf135b3aa91f4070886eac266009c7c299a674f6f705ac957c0b64d3.wav"
+    },
+    "rep_completed": null,
+    "tracking_lost": {
+      "text": "Tracking is paused. When you're ready, check that the camera can see your joints needed for this movement.",
+      "fileName": "41459d1d556ea35ea035ee7ede9011acec01e62c52f1d1e9e6d8c9c3af1e08f4.wav"
+    },
+    "tracking_restored": {
+      "text": "The joints for this movement are back in view.",
+      "fileName": "41b870558b8d5e2a6b6169a0010f233a9f8b7520079032264880d98ebf71eb94.wav"
+    },
+    "session_ended": {
+      "text": "Your session has ended.",
+      "fileName": "327cd1652834828ad04fa84b6c67e0c8a8bcd9c2eb4ec40ab0b61908b37161c6.wav"
+    },
+    "question_goal": {
+      "text": "Would you like to add context about ending below the repetition goal?",
+      "fileName": "2f30758eee39c29603fa89748cefeb1cc28f4d4b88fc7fcb1e5be676d9b98375.wav"
+    },
+    "question_tracking": {
+      "text": "Would you like to add context about the tracking interruptions?",
+      "fileName": "471561c36892e33c21928006675d43147d781eb821b1a85569b94cfd84522183.wav"
+    },
+    "question_cycle": {
+      "text": "Would you like to add context about the incomplete movement cycles?",
+      "fileName": "eea61d646def972094a56a72b2686b6871de5d56a6a927a4dcd2c213e4cc6651.wav"
+    },
+    "question_general": {
+      "text": "Would you like to add any context about this session?",
+      "fileName": "9344801270d0b005b87715f6565917424c861c31ee066cf7418339b71f2c2885.wav"
+    }
+  }
+}

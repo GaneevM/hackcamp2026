@@ -23,14 +23,28 @@ try{
  let executablePath=process.env.FORMNOTE_BROWSER_EXECUTABLE;
  if(!executablePath)for(const candidate of ['C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe']){try{await fs.access(candidate);executablePath=candidate;break;}catch{}}
  browser=await chromium.launch({headless:true,executablePath});
- const page=await browser.newPage({viewport:{width:1280,height:800},reducedMotion:'reduce'}),errors=[];
- page.on('pageerror',error=>errors.push(error.message));
- await page.goto('http://127.0.0.1:'+server.address().port+'/#move');
- await page.waitForFunction(()=>window.handFixture&&document.getElementById('authGate').hidden);
+ const page=await browser.newPage({viewport:{width:1536,height:864},reducedMotion:'reduce'}),errors=[];
+ page.on('pageerror',error=>errors.push(error.stack||error.message));
+ await page.goto('http://127.0.0.1:'+server.address().port+'/#home');
+ try{await page.waitForFunction(()=>window.handFixture&&document.getElementById('authGate').hidden,null,{timeout:10000});}
+ catch(error){throw new Error(`App did not unlock. Auth status: ${await page.locator('#authGateStatus').textContent().catch(()=>'(missing)')}; errors: ${errors.join(' | ')||'(none)'}`,{cause:error});}
  assert.equal(await page.locator('#airPointerCursor,#pointerCalibration,#airPointerToggle').count(),0);
+ const landing=await page.evaluate(()=>({nav:[...document.querySelectorAll('.sidebar .nav [data-screen]')].map(n=>n.innerText.trim()),slogan:document.querySelector('#screen-home .home-focus h1')?.textContent,welcomeHidden:!document.querySelector('#screen-home .welcome').getClientRects().length,rank:document.getElementById('climbRankName')?.textContent,start:document.getElementById('homeStartSession')?.textContent.trim(),pushupFirst:document.querySelector('#movement [data-movement]')?.dataset.movement,voiceTitle:document.querySelector('.session-companion h2')?.textContent,voiceModes:[...document.querySelectorAll('.session-companion .voice-modes button')].map(n=>n.textContent.trim()),signOutNav:document.querySelectorAll('.nav [data-screen="signout"],.mobile-nav [data-screen="signout"]').length}));
+ assert.deepEqual(landing.nav,['Home','Practice','My Plan','Progress','Profile']);assert.equal(landing.slogan,'The peak of physiotherapy.');assert.equal(landing.welcomeHidden,true);assert.equal(landing.rank,'Trailhead');assert.ok(landing.start.includes('Start Session'));assert.equal(landing.pushupFirst,'pushup');assert.equal(landing.voiceTitle,'Voice controls');assert.deepEqual(landing.voiceModes,['QuietOnly tracking alerts','NormalStandard spoken cues']);assert.equal(landing.signOutNav,0);
+ assert.equal(await page.locator('#exerciseSelect').isVisible(),false);assert.equal(await page.locator('#practice-settings').count(),0);assert.equal(await page.locator('.practice-settings').count(),1);
+ await page.locator('.sidebar .nav [data-screen="plan"]').click();assert.equal(await page.locator('#screen-plan').isVisible(),true);assert.equal(await page.locator('#diagnosisFile').count(),1);assert.equal(await page.locator('#previewReport').count(),1);
+ await page.locator('.sidebar .nav [data-screen="progress"]').click();assert.equal(await page.locator('#screen-progress').isVisible(),true);assert.equal(await page.locator('#careHistoryPanel').isVisible(),true);
+ await page.locator('.sidebar .nav [data-screen="home"]').click();assert.equal(await page.locator('#photoGallery').count(),1);
+ if(process.env.FORMNOTE_UI_SCREENSHOT)await page.screenshot({path:path.join(os.tmpdir(),'physipeak-home-1536x864.png')});
+ await page.evaluate(async()=>{await window.handFixture.setup();window.handFixture.app.poseReady=true;document.getElementById('homeStartSession').click();});
+ await page.waitForFunction(()=>window.handFixture.app.countdownActive);
+ assert.equal(await page.locator('#screen-move').isVisible(),true);assert.equal(await page.locator('#sessionCountdown').isVisible(),true);assert.equal(await page.locator('#countdownNumber').textContent(),'5');
+ await page.locator('#cancelCountdown').click();
+ await page.locator('.sidebar .nav [data-screen="profile"]').click();
  await page.evaluate(async()=>{await window.handFixture.setup();window.handFixture.saveSessions([{id:'existing-session',date:new Date().toISOString(),movement:'sit',exercise:'Existing session',metric:'Knee flexion',reps:1,angle:20,confidence:2,pain:1,note:'Keep this',side:'left',manual:true}]);});
  await page.locator('#handControlsToggle').click();
  assert.equal(await page.locator('#handControlsToggle').getAttribute('aria-pressed'),'true');
+ await page.locator('.sidebar .nav [data-screen="move"]').click();
  const camera=await page.evaluate(()=>{
   const f=window.handFixture,stream=f.app.stream;
   f.frames('one',10);const paused=f.app.cameraPaused,copy=document.getElementById('gestureCameraPause').textContent;

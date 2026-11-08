@@ -1,12 +1,7 @@
 import {Router} from 'express';
 import {z} from 'zod';
 import {journalScopeSchema} from './journal-store.js';
-const schema=z.object({scope:journalScopeSchema,checkin:z.object({
- id:z.string().min(1).max(100),date:z.string().datetime(),exercise:z.literal('Check-in'),
- reps:z.null(),duration:z.literal(0),angle:z.null(),movement:z.null(),side:z.null(),
- confidence:z.number().int().min(1).max(5).nullable(),pain:z.number().int().min(0).max(10).nullable(),
- note:z.string().trim().max(2000),checkin:z.literal(true)
-}).strict().refine(row=>row.pain!==null||row.confidence!==null||row.note.length>0,'Add a rating or note.')}).strict();
+import {checkinSchema as schema} from './checkin-validation.js';
 export function createCheckinRouter(db){
  const router=Router();
  db.exec('CREATE TABLE IF NOT EXISTS journal_checkins(scope TEXT NOT NULL,id TEXT NOT NULL,record_json TEXT NOT NULL,PRIMARY KEY(scope,id))');

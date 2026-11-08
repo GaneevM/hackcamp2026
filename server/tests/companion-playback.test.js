@@ -119,7 +119,7 @@ test('session end speaks exactly the displayed results-based question after conf
   h.companion.start({ manual: true, movement: 'sit', targetReps: 5 });
   h.finishSpeech();
   await h.companion.finish({ id: 'question-test', reps: 1 });
-  assert.equal(h.spoken.at(-1).text, 'Your session has ended.');
+  assert.equal(h.spoken.at(-1).text, 'Session ended.');
   const question = h.element('question').textContent;
   assert.match(question, /below the repetition goal/);
   h.finishSpeech();
@@ -145,16 +145,16 @@ test('quiet mode keeps the follow-up on screen without speaking it', async t => 
   assert.equal(h.spoken.length, 0);
 });
 
-test('voice is enabled with Gemini-first playback and encouraging cues on first use', async t => {
+test('voice is enabled with Gemini-first playback and Normal cues on first use', async t => {
   const h = await harness(t);
   assert.equal(h.element('enabled').checked, true);
   assert.equal(h.element('source').value, 'gemini');
-  assert.equal(h.element('mode').value, 'encouraging');
+  assert.equal(h.element('mode').value, 'concise');
   assert.equal(h.element('voiceLabel').textContent, 'Voice on');
   h.element('modeConcise').onclick();
   assert.equal(h.element('mode').value, 'concise');
   assert.equal(h.element('modeConcise').ariaPressed, 'true');
-  assert.equal(h.element('modeEncouraging').ariaPressed, 'false');
+  assert.equal(h.element('modeQuiet').ariaPressed, 'false');
 });
 
 test('a returning user keeps their muted voice and selected companion style', async t => {

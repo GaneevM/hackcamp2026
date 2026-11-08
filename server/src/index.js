@@ -10,7 +10,7 @@ const app = createIntegratedApp(db, reportMode);
 const server = app.listen(port, '127.0.0.1', () => {
   console.log(`Integrated Formnote app: http://localhost:${port}`);
   console.log(`Synthetic report mode: ${reportMode}`);
-  console.log('Camera/manual journal records stay local; Gemini demo uses fictional data only.');
+  console.log('Local journal data are shared with Gemini only after explicit preview and consent.');
   console.log('Local profile scopes are not backend authentication. Do not expose this server publicly.');
 });
 function shutdown() {
