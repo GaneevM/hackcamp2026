@@ -287,6 +287,11 @@ function handStatus(message,progress=null) {
   syncHandActionMenu();
 }
 function stopPalmScroll(){handControls.scroll.stop();handControls.surface=null;}
+function focusCameraStage(){
+  stopPalmScroll();resetHandMenuMotion();
+  if(app.cameraPaused)setCameraViewPaused(false);
+  $('stage').scrollIntoView({block:'center',inline:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+}
 const handActionNames={camera:'Camera',session:'Session',voice:'Voice',photo:'Capture photo'};
 function isPracticeScreen(){return $('screen-move')?.classList.contains('screen-active')||false;}
 function cameraIsOn(){return Boolean(app.stream?.getVideoTracks().some(track=>track.readyState==='live'));}
@@ -346,20 +351,26 @@ function updatePausedCameraStatus() {
 function cancelGesturePhoto(message='Photo countdown cancelled.'){
   if(!handControls.photoTimer)return false;
   clearInterval(handControls.photoTimer);handControls.photoTimer=null;handControls.photoDeadline=0;handControls.photoAnnounced=0;
+  $('photoCountdown').hidden=true;
   syncHandActionMenu();handStatus(message);return true;
 }
 function scheduleGesturePhoto(){
   if(handControls.photoTimer){cancelGesturePhoto('Photo countdown cancelled.');return;}
   if(!cameraIsOn()||$('video').readyState<2){handStatus('Turn the camera on before choosing Capture photo.');return;}
+  if(app.countdownActive){handStatus('Wait for the session countdown to finish before taking a photo.');return;}
+  $('photoCountdownNumber').textContent='5';$('photoCountdown').hidden=false;
+  focusCameraStage();
   handControls.photoDeadline=Date.now()+5000;handControls.photoAnnounced=0;
   const tick=()=>{
     if(!cameraIsOn()||$('video').readyState<2){cancelGesturePhoto('Photo countdown stopped because the camera is off.');return;}
     const left=Math.max(0,Math.ceil((handControls.photoDeadline-Date.now())/1000));
-    if(left===0){clearInterval(handControls.photoTimer);handControls.photoTimer=null;handControls.photoDeadline=0;handControls.photoAnnounced=0;syncHandActionMenu();void captureSessionPhoto();return;}
+    if(left===0){clearInterval(handControls.photoTimer);handControls.photoTimer=null;handControls.photoDeadline=0;handControls.photoAnnounced=0;$('photoCountdown').hidden=true;syncHandActionMenu();void captureSessionPhoto();return;}
+    $('photoCountdownNumber').textContent=String(left);
     if(left!==handControls.photoAnnounced){handControls.photoAnnounced=left;handStatus(`Photo in ${left}… hold your position. Select Capture photo again to cancel.`);}
   };
   tick();handControls.photoTimer=setInterval(tick,100);syncHandActionMenu();
 }
+$('cancelPhotoCountdown').onclick=()=>cancelGesturePhoto();
 async function performHandAction(action){
   if(document.querySelector('dialog[open]')||app.autoCalibration.active){handStatus('Close the current dialog or finish angle setup before using an action.');return;}
   if(action==='camera'){
@@ -401,6 +412,7 @@ function processControlHand(hand,now) {
   const action=handControls.commands.update(gesture==='one'?'one':gesture==='palm'||gesture==='fist'?gesture:'other',now);
   if(action){stopPalmScroll();performHandCommand(action);return;}
   if(gesture==='palm'){
+    if(app.countdownActive||handControls.photoTimer){stopPalmScroll();resetHandMenuMotion();return;}
     const aspect=$('video').videoWidth/$('video').videoHeight||1,palm=palmReading(hand,aspect);
     if(isPracticeScreen()){
       if(previousGesture!=='palm')resetHandMenuMotion();
@@ -689,7 +701,8 @@ function setActive(active) {
   $('exerciseSelect').disabled=active;$('bodySide').disabled=active||$('exerciseSelect').value==='wave';
   $('movement').dataset.sessionActive = String(active);
   $('movement').dataset.manual = String(app.manual);
-  if (active) $('movement').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (active && !app.manual) focusCameraStage();
+  else if(active) $('movement').scrollIntoView({ behavior: 'smooth', block: 'start' });
   document.querySelectorAll('[data-movement]').forEach(button => { button.disabled = active; });
   app.running = active; $('repBadge').classList.toggle('show', active); $('stageStop').classList.toggle('show', active);
   syncCameraControl();
@@ -729,8 +742,10 @@ function cancelCountdown() {
 }
 
 function startCountdown() {
+  cancelGesturePhoto('Photo countdown cancelled to start the session.');
   app.countdownActive = true; app.countdownRemaining = 5;
   $('countdownNumber').textContent = '5'; $('sessionCountdown').hidden = false;
+  focusCameraStage();
   $('startBtn').disabled = true; setCountdownControls(true); $('trackingTitle').textContent = 'Get ready';
   $('trackingCopy').textContent = 'Step back into full view · 5s';
   cameraState('Get ready', 'neutral', 'Step back into full view before tracking starts.', `${app.poseReady ? 'Ready' : '0'} joints`);
@@ -1275,6 +1290,7 @@ function buildAppScreens() {
     if (activeScreen === 'move' && key !== 'move' && app.running) { toast('Finish the active session before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.autoCalibration.active) { toast('Finish calibration before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.countdownActive) cancelCountdown();
+    if (activeScreen === 'move' && key !== 'move') cancelGesturePhoto('Photo countdown cancelled after leaving Practice.');
     if (key !== 'move') app.autoStartFromHome = false;
     const keepCameraForHands = handControls.enabled;
     if (activeScreen === 'move' && key !== 'move' && (app.stream || app.cameraAcquiring) && !keepCameraForHands) {
@@ -1308,6 +1324,7 @@ function buildAppScreens() {
     if (!app.stream || !app.landmarker) await startCamera();
     else if (app.poseReady) { app.autoStartFromHome = false; beginSession(false); }
     else cameraState('Finding your position', 'neutral', 'Step into view. The session will start when your joints are visible.');
+    if(app.stream)focusCameraStage();
   });
   const initial = location.hash.slice(1);
   switchTo(byName[initial] || ['visit','progress'].includes(initial) ? initial : 'home');
@@ -1505,7 +1522,7 @@ async function captureSessionPhoto(){
   const video = $('video'); if (!cameraIsOn() || video.readyState < 2 || !video.videoWidth) { toast('Turn the camera on before taking a photo.'); return; }
   const canvas = document.createElement('canvas'); canvas.width = video.videoWidth; canvas.height = video.videoHeight; canvas.getContext('2d').drawImage(video, 0, 0);
   const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', .86)); if (!blob) { toast('Could not capture this frame.'); return; }
-  try { await mediaPut('photos', { id: crypto.randomUUID?.() || String(Date.now()), sessionId: app.activeSessionId || null, exercise: activeMovement().title, date: new Date().toISOString(), blob }); await renderMedia(); document.querySelector('.practice-photos').open=true;handStatus('Photo saved on this device.');toast('Photo saved on this device.'); } catch { toast('Could not save the photo on this device. Check browser storage permissions.'); }
+  try { await mediaPut('photos', { id: crypto.randomUUID?.() || String(Date.now()), sessionId: app.activeSessionId || null, exercise: activeMovement().title, date: new Date().toISOString(), blob }); await renderMedia(); document.querySelector('.practice-photos').open=true;focusCameraStage();handStatus('Photo saved on this device.');toast('Photo saved on this device.'); } catch { toast('Could not save the photo on this device. Check browser storage permissions.'); }
 }
 $('capturePhoto').onclick = scheduleGesturePhoto;
 renderPlan(); renderMedia();

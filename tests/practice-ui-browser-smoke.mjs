@@ -8,7 +8,7 @@ import {createRequire} from 'node:module';
 const {chromium}=createRequire(import.meta.url)('playwright');
 const root=path.resolve('dist');
 const sdk="window.auth0={Auth0Client:class {async checkSession(){} async isAuthenticated(){return true} async getUser(){return {sub:'practice-ui-test',name:'UI Test'}}}};";
-const harness=`\nwindow.uiFixture={app,handControls,scheduleGesturePhoto,navigateHandActionList,mediaAll,async setup(){const canvas=document.createElement('canvas');canvas.width=640;canvas.height=360;canvas.getContext('2d').fillRect(0,0,640,360);app.stream=canvas.captureStream(20);document.getElementById('video').srcObject=app.stream;await document.getElementById('video').play();document.getElementById('cameraEmpty').style.display='none';document.getElementById('video').style.display='block';syncCameraControl();}};`;
+const harness=`\nwindow.uiFixture={app,handControls,scheduleGesturePhoto,navigateHandActionList,mediaAll,async setup(){const canvas=document.createElement('canvas');canvas.width=640;canvas.height=360;canvas.getContext('2d').fillRect(0,0,640,360);app.stream=canvas.captureStream(20);app.landmarker={detectForVideo:()=>({landmarks:[],worldLandmarks:[]})};app.poseReady=true;document.getElementById('startBtn').disabled=false;document.getElementById('video').srcObject=app.stream;await document.getElementById('video').play();document.getElementById('cameraEmpty').style.display='none';document.getElementById('video').style.display='block';syncCameraControl();}};`;
 const server=http.createServer(async(req,res)=>{try{
  const url=new URL(req.url,'http://localhost'),file=path.resolve(root,'.'+(url.pathname==='/'?'/index.html':url.pathname));
  if(!file.startsWith(root+path.sep)){res.writeHead(403);return res.end();}
@@ -49,9 +49,23 @@ try{
  assert.equal(await page.locator('#handActionMenu button:visible').count(),4);
  await page.evaluate(async()=>{await window.uiFixture.setup();const f=window.uiFixture;f.navigateHandActionList({y:.3},1000,.1);for(let i=1;i<=5;i++)f.navigateHandActionList({y:.7},1000+i*80,.1);});
  assert.equal(await page.locator('[data-hand-action="photo"]').getAttribute('aria-current'),'true');
+ await page.locator('[data-hand-action="session"]').click();
+ assert.equal(await page.locator('#sessionCountdown').isVisible(),true);
+ await page.waitForFunction(()=>{const r=document.getElementById('stage').getBoundingClientRect();return Math.abs(r.top+r.height/2-innerHeight/2)<8;});
+ await page.locator('#cancelCountdown').click();
  await page.locator('[data-hand-action="photo"]').click();
+ assert.equal(await page.locator('#photoCountdown').isVisible(),true);
+ assert.equal(await page.locator('#photoCountdownNumber').textContent(),'5');
+ await page.waitForFunction(()=>{const r=document.getElementById('stage').getBoundingClientRect();return Math.abs(r.top+r.height/2-innerHeight/2)<8;});
+ await page.locator('#cancelPhotoCountdown').click();
+ assert.equal(await page.locator('#photoCountdown').isVisible(),false);
+ await page.waitForTimeout(5200);
+ assert.equal(await page.locator('#practicePhotoGallery img').count(),0);
+ await page.locator('[data-hand-action="photo"]').click();
+ assert.equal(await page.locator('#photoCountdown').isVisible(),true);
  assert.ok(await page.evaluate(()=>window.uiFixture.handControls.photoDeadline-Date.now()>4000));
  await page.waitForFunction(()=>document.querySelectorAll('#practicePhotoGallery img').length===1,null,{timeout:10000});
+ assert.equal(await page.locator('#photoCountdown').isVisible(),false);
  assert.equal(await page.locator('#photoGallery img').count(),1);
  assert.equal(await page.locator('#practicePhotoGallery img').evaluate(n=>n.complete&&n.naturalWidth>0),true);
  await page.screenshot({path:path.join(os.tmpdir(),'physipeak-practice-updated.png')});
@@ -59,6 +73,11 @@ try{
  await page.waitForFunction(()=>document.querySelectorAll('#practicePhotoGallery img').length===1);
  await page.setViewportSize({width:390,height:844});
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+ await page.evaluate(()=>window.uiFixture.setup());
+ await page.locator('[data-hand-action="photo"]').click();
+ assert.equal(await page.locator('#photoCountdown').isVisible(),true);
+ await page.waitForFunction(()=>{const r=document.getElementById('stage').getBoundingClientRect();return Math.abs(r.top+r.height/2-innerHeight/2)<8;});
+ await page.locator('#cancelPhotoCountdown').click();
  assert.deepEqual(errors,[]);
- console.log('Passed: first-screen Home, real logo, inline actions, palm list navigation, 5-second photo delay, local photo persistence, mobile width, and no application errors.');
+ console.log('Passed: Reports navigation, desktop/mobile camera centering, visible session/photo countdowns, cancelled photo does not save, photo persistence, responsive width, and no application errors.');
 }finally{await browser?.close();await new Promise(r=>server.close(r));}
