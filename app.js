@@ -334,7 +334,7 @@ function navigateHandActionList(point,now,range){
 }
 function setHandControlsEnabled(enabled) {
   handControls.enabled=enabled;stopPalmScroll();handControls.commands.reset();handControls.gesture='none';
-  resetHandMenuMotion();if(!enabled)handControls.menuSelection=0;
+  resetHandMenuMotion();if(!enabled){handControls.menuSelection=0;handControls.sessionNavigation=false;handControls.sessionCommands.reset();}
   handControls.label=null;handControls.failures=0;handControls.lastHand=null;
   $('handControlsToggle').textContent=enabled?'Hand controls on':'Enable hand controls';
   $('handControlsToggle').setAttribute('aria-pressed',String(enabled));
@@ -794,7 +794,11 @@ function startCountdown() {
 }
 
 function beginSession(manual = false) {
-  setHandControlsEnabled(false);
+  handControls.sessionNavigation=false;handControls.sessionCommands.reset();handControls.commands.reset();stopPalmScroll();
+  if(!manual){
+    if(handLandmarker)setHandControlsEnabled(true);
+    else void loadHandTracker().then(()=>{if(app.stream&&(app.running||app.countdownActive))setHandControlsEnabled(true);}).catch(()=>{});
+  }
   app.autoStartFromHome = false;
   pushupCounter.reset(); movementCounter.reset(); pushupPose=null;
   $('newSession').hidden = true;
@@ -840,6 +844,7 @@ $('manualMinus').onclick = () => { if(!app.running||!app.manual)return;app.reps 
 $('manualPlus').onclick = () => { if(!app.running||!app.manual)return;app.reps += 1; $('repCount').textContent = String(app.reps); companion?.manualRep(app.reps); };
 
 function endSession() {
+  handControls.sessionNavigation=false;handControls.sessionCommands.reset();
   liveFeedback.stop();
   if (!app.running) return;
   cancelGesturePhoto('Photo countdown cancelled because the session ended.');
