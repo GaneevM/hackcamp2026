@@ -226,3 +226,154 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
   .card, .shortcut-card, .date-badge, .camera-device { border-color:#9aa99c; }
   .nav button.active, .mobile-nav button.active { outline:1px solid currentColor; }
 }
+
+/* Practice: readable from the exercise position, with one place for session actions. */
+.content { margin-inline:auto; }
+.app-screen[data-screen-view="move"] { max-width:1080px; margin-inline:auto; width:100%; }
+.app-screen[data-screen-view="move"] .screen-heading h1 { font-size:clamp(32px,4vw,44px); }
+#movement { overflow:hidden; }
+#movement .card-head { padding:24px 28px 18px; }
+#movement .card-title { font-size:26px; }
+#movement .card-desc { font-size:16px; }
+#movement .live-state { font-size:12px; }
+.practice-choices { display:flex; flex-wrap:wrap; gap:8px; padding:0 28px 22px; }
+.practice-choices button { flex:1 1 140px; min-height:52px; border:1px solid #d7e2db; background:#f8faf7; color:#43584d; border-radius:14px; padding:12px 14px; font:600 15px var(--font-ui); cursor:pointer; }
+.practice-choices button[aria-pressed="true"] { border-color:var(--green); background:var(--green); color:#fff; box-shadow:0 3px 9px #17654e20; }
+.practice-choices button:disabled { cursor:default; opacity:.55; }
+.practice-choices button[aria-pressed="true"]:disabled { opacity:1; }
+#movement .stage { margin:0 20px; min-height:360px; max-height:590px; border-radius:18px; }
+#movement .setup-message { max-width:470px; padding:28px 32px; }
+#movement .setup-message h3 { font-size:clamp(24px,3vw,32px); line-height:1.2; }
+#movement .setup-message p { font-size:18px; line-height:1.6; color:#d5e5db; }
+#movement .stage-counter { display:grid; place-content:center; top:20px; right:20px; min-width:108px; padding:14px 22px; background:#fff; }
+#movement .stage-counter strong { font:750 clamp(42px,5vw,68px)/1 var(--font-ui); letter-spacing:-2px; }
+#movement .stage-counter span { font-size:14px; margin-top:6px; color:#40574b; }
+#movement .camera-meta { font-size:11px; bottom:12px; right:16px; }
+#movement .stage-instructions { position:relative; inset:auto; display:block; margin:16px 20px 0; padding:20px 26px; max-width:none; border:1px solid #dce8df; border-left:5px solid var(--green); border-radius:14px; background:#edf5ef; color:#173d2d; }
+#movement .stage-instructions strong { display:block; font-size:clamp(24px,3vw,36px); line-height:1.2; margin-bottom:8px; letter-spacing:-.7px; }
+#movement .stage-instructions span { display:block; font-size:clamp(18px,2vw,23px); color:#375748; line-height:1.45; }
+#movement[data-session-active="true"] .stage-instructions { background:#163e2e; border-color:#163e2e; color:#fff; }
+#movement[data-session-active="true"] .stage-instructions span { color:#e1eee5; }
+#movement .camera-status-line { font-size:14px; flex-wrap:wrap; gap:10px; padding:14px 6px; border:0; background:transparent; }
+.session-actions { display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:12px; padding:8px 24px 24px; }
+.session-actions button { min-height:56px; font-size:17px; min-width:155px; }
+.session-actions #stageStop { position:static; display:none; background:#a3342e; color:white; border:0; border-radius:12px; padding:12px 24px; }
+.session-actions #stageStop.show { display:block; }
+#movement[data-session-active="true"] #startBtn { display:none; }
+#movement[data-session-active="true"] #enableCamera, #movement[data-session-active="true"] #manualBtn { display:none; }
+.practice-settings { padding:0 28px 20px; }
+.practice-settings summary, .voice-settings summary, .companion-demo summary { min-height:44px; display:list-item; cursor:pointer; color:#38654e; font-weight:600; font-size:15px; padding:10px 0; }
+#movement .camera-controls { padding:12px 0 0; gap:12px; align-items:end; }
+.camera-controls label { display:grid; gap:6px; font-size:14px; color:#52685b; flex:1 1 150px; }
+#movement .camera-device { font-size:16px; min-height:48px; max-width:100%; width:100%; padding:10px 14px; border-radius:10px; }
+#movement .controls-note { font-size:14px; margin-left:0; }
+#movement .setup-row { padding:0 28px 24px; gap:12px; }
+#movement .setup-tip { padding:12px; }
+#movement .setup-tip b { font-size:14px; }
+#movement .setup-tip span { font-size:13px; line-height:1.5; }
+#manualCounter { padding:10px 24px 24px!important; gap:18px!important; }
+#manualCounter button { min-height:54px; font-size:18px; }
+#manualCounter span { font-size:16px!important; }
+.session-companion { padding:26px 28px!important; margin:0!important; }
+.companion-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+.companion-name { display:flex; align-items:center; gap:14px; }
+.voice-symbol { display:grid; place-items:center; width:48px; height:48px; background:#e8f3ed; color:var(--green); border-radius:16px; font-size:26px; flex-shrink:0; }
+.session-companion h2 { margin:0; font-size:23px; letter-spacing:-.5px; }
+.companion-name p { margin:4px 0 0; color:#5b7063; font-size:15px; }
+.voice-toggle { position:relative; display:flex; align-items:center; gap:10px; min-height:48px; padding:8px 14px; background:#eef5ef; border-radius:999px; cursor:pointer; font-size:15px; font-weight:650; }
+.voice-toggle input { appearance:none; width:40px; height:24px; border-radius:999px; background:#a7b3aa; position:relative; margin:0; cursor:pointer; }
+.voice-toggle input:checked { background:var(--green); }
+.voice-toggle input:before { content:''; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:white; transition:transform .15s; }
+.voice-toggle input:checked:before { transform:translateX(16px); }
+.companion-toolbar { margin:24px 0 18px; }
+.voice-modes { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.voice-modes button { text-align:left; padding:14px 16px; min-height:76px; border:1px solid #dce5de; border-radius:13px; background:#fafbf9; color:#405749; font:650 16px var(--font-ui); cursor:pointer; }
+.voice-modes button span { display:block; font-size:13px; font-weight:400; margin-top:5px; }
+.voice-modes button[aria-pressed="true"] { background:#e7f2eb; border-color:#367c58; color:#164c32; box-shadow:inset 0 0 0 1px #367c58; }
+.companion-activity { font-size:17px; font-weight:600; color:#284b38; margin:14px 0 6px; }
+.companion-event { font-size:17px; color:#50665a; margin:6px 0; }
+.companion-event:empty { display:none; }
+.voice-settings { margin-top:16px; border-top:1px solid #e3eae4; padding-top:5px; }
+.voice-settings-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:12px 0 16px; }
+.voice-settings-grid label { display:grid; gap:8px; font-size:14px; font-weight:600; }
+.voice-settings-grid select { width:100%; min-width:0; max-width:100%; min-height:48px; padding:10px 12px; border:1px solid #cfdcd3; border-radius:10px; background:#fff; color:#294434; font:15px var(--font-ui); }
+.companion-actions { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0; }
+.companion-actions button { font-size:15px; min-height:46px; }
+.companion-technical { font-size:13px; color:#627469; line-height:1.5; overflow-wrap:anywhere; margin:10px 0; }
+.companion-followup { border-top:1px solid #dce6de; margin-top:22px; padding-top:24px; }
+.companion-followup[hidden], .companion-summary[hidden] { display:none; }
+.followup-eyebrow { color:#46715a; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:1.2px; }
+.followup-question { font-size:clamp(23px,2.5vw,30px); line-height:1.4; letter-spacing:-.6px; color:#1b3a29; margin:12px 0 6px; }
+.companion-followup label { display:block; font-size:15px; font-weight:600; margin-top:16px; }
+.companion-followup label span { font-size:13px; color:#697a6e; font-weight:400; margin-left:8px; }
+.companion-followup textarea { display:block; width:100%; box-sizing:border-box; min-height:110px; border:1px solid #cfdcd3; border-radius:12px; padding:14px; margin:8px 0 16px; background:#fcfdfa; color:#25432f; font:16px/1.5 var(--font-ui); resize:vertical; }
+.companion-summary { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; padding:18px; border-radius:12px; background:#f2f6f1; }
+.companion-demo { margin-top:18px; border-top:1px solid #e3eae4; padding-top:5px; }
+.companion-demo p { font-size:14px; color:#607365; line-height:1.6; }
+@media(min-width:1000px) { .app-screen[data-screen-view="move"] .layout { grid-template-columns:minmax(0,1fr); } }
+@media(max-width:650px) {
+  #movement .card-head { padding:20px 18px 16px; }
+  .practice-choices { padding:0 16px 16px; display:grid; grid-template-columns:1fr 1fr; }
+  .practice-choices button { font-size:14px; }
+  #movement .stage { margin:0 10px; min-height:280px; }
+  #movement .stage-counter { min-width:76px; padding:12px 16px; top:12px; right:12px; }
+  #movement .stage-instructions { margin:12px 10px 0; padding:18px; }
+  #movement .stage-instructions strong { font-size:25px; }
+  #movement .stage-instructions span { font-size:18px; }
+  .session-actions { padding:6px 16px 18px; gap:10px; }
+  .session-actions button { flex:1 1 130px; min-width:0; font-size:16px; }
+  .practice-settings { padding:0 18px 16px; }
+  #movement .setup-row { padding:0 16px 18px; }
+  .session-companion { padding:22px 18px!important; }
+  .companion-heading { gap:14px; }
+  .companion-name p { font-size:14px; }
+  .voice-modes { gap:6px; }
+  .voice-modes button { padding:12px 8px; font-size:14px; text-align:center; }
+  .voice-modes button span { font-size:12px; }
+  .voice-settings-grid { grid-template-columns:1fr; }
+}
+
+/* Keep the active session in view without scrolling back to the controls. */
+#movement { scroll-margin-top:84px; }
+#movement .stage { height:clamp(280px,38svh,430px); min-height:0; aspect-ratio:auto; }
+#movement .setup-message h3 { font-family:var(--font-ui); font-weight:700; }
+.app-screen:has(#movement[data-session-active="true"]) .screen-heading { display:none; }
+#movement[data-session-active="true"] .card-head,
+#movement[data-session-active="true"] .practice-choices,
+#movement[data-session-active="true"] .setup-row,
+#movement[data-session-active="true"] .practice-settings { display:none; }
+#movement[data-session-active="true"] { padding-top:20px; }
+#movement[data-session-active="true"] .stage { height:clamp(240px,40svh,440px); }
+#movement[data-session-active="true"] .session-actions { padding-bottom:20px; }
+#movement[data-manual="true"] .frame-guide,
+#movement[data-manual="true"] .setup-next { display:none; }
+#movement[data-manual="true"] .stage { height:220px; }
+#movement[data-manual="true"] .cam-icon { display:none; }
+#practiceVoice { min-width:115px; }
+@media(max-width:650px) {
+  #movement { scroll-margin-top:72px; }
+  #movement .stage { height:300px; }
+  #movement[data-session-active="true"] .stage { height:260px; }
+  #movement[data-manual="true"] .stage { height:210px; }
+}
+
+/* Show the entire sensor image, including feet. Overlay uses the same contain transform. */
+#movement .stage { height:clamp(420px,58svh,700px); }
+#movement .stage video { object-fit:contain; }
+#movement[data-session-active="true"] .stage { height:clamp(360px,56svh,680px); }
+#movement[data-manual="true"] .stage { height:240px; }
+#movement .session-actions { position:sticky; bottom:12px; z-index:3; background:#fff; border-radius:14px; box-shadow:0 5px 20px #173d2d0d; }
+.rep-goal { position:absolute; top:20px; left:20px; padding:10px 14px; border-radius:999px; background:#153b2ee6; color:#e1f6e8; font-size:15px; font-weight:650; z-index:2; }
+.rep-reward { position:absolute; bottom:42px; left:50%; transform:translateX(-50%); background:#e5ffab; color:#234b23; padding:12px 22px; border-radius:999px; font-size:clamp(21px,3vw,30px); font-weight:750; z-index:2; opacity:0; pointer-events:none; white-space:nowrap; }
+.rep-reward.celebrate { animation:rep-celebrate 1s ease-out both; }
+@keyframes rep-celebrate { 0% { opacity:0; transform:translate(-50%,12px) scale(.88); } 18%,65% { opacity:1; transform:translate(-50%,0) scale(1); } 100% { opacity:0; transform:translate(-50%,-15px) scale(1.02); } }
+@media(max-width:650px) {
+  #movement .stage, #movement[data-session-active="true"] .stage { height:clamp(380px,56svh,620px); }
+  #movement[data-manual="true"] .stage { height:240px; }
+  #movement .session-actions { bottom:78px; }
+  .rep-goal { max-width:55%; font-size:12px; top:12px; left:12px; padding:8px 10px; }
+}
+@media(prefers-reduced-motion:reduce) { .rep-reward.celebrate { animation:none!important; opacity:1; } }
+
+.session-actions #newSession[hidden] { display:none; }
+.session-actions #newSession { border:2px solid #17654e; }

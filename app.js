@@ -227,11 +227,18 @@ async function startCamera(deviceId) {
 }
 
 $('enableCamera').onclick = () => startCamera();
+document.querySelectorAll('[data-movement]').forEach(button => {
+  button.onclick = () => {
+    if (app.running || app.autoCalibration.active) { toast('Finish the current session or calibration first.'); return; }
+    $('exerciseSelect').value = button.dataset.movement;
+    $('exerciseSelect').dispatchEvent(new Event('change'));
+  };
+});
 $('cameraSelect').onchange = (event) => startCamera(event.target.value);
 $('switchCamera').onclick = () => { app.facing = app.facing === 'user' ? 'environment' : 'user'; startCamera(); };
 
 function canvasPoint(point, video, stage) {
-  const sx = stage.clientWidth / video.videoWidth; const sy = stage.clientHeight / video.videoHeight; const scale = Math.max(sx, sy);
+  const sx = stage.clientWidth / video.videoWidth; const sy = stage.clientHeight / video.videoHeight; const scale = Math.min(sx, sy);
   const width = video.videoWidth * scale; const height = video.videoHeight * scale;
   return { x: (1 - point.x) * width + (stage.clientWidth - width) / 2, y: point.y * height + (stage.clientHeight - height) / 2 };
 }
@@ -301,9 +308,14 @@ function monitor() {
 }
 
 function setActive(active) {
+  $('movement').dataset.sessionActive = String(active);
+  $('movement').dataset.manual = String(app.manual);
+  if (active) $('movement').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.querySelectorAll('[data-movement]').forEach(button => { button.disabled = active; });
   app.running = active; $('repBadge').classList.toggle('show', active); $('stageStop').classList.toggle('show', active);
   const captureButton = $('capturePhoto'); if (captureButton) captureButton.disabled = !active || app.manual || $('exerciseSelect').value === 'wave';
   const isWave = $('exerciseSelect').value === 'wave';
+  $('stageStop').textContent = isWave ? 'Finish camera check' : 'Finish & save';
   $('startBtn').textContent = active ? 'In progress' : isWave ? 'Start demo' : 'Start session';
   $('startBtn').disabled = active || (!app.manual && (!app.stream || !app.landmarker));
   if (active) {
@@ -314,13 +326,17 @@ function setActive(active) {
 }
 
 function beginSession(manual = false) {
+  $('newSession').hidden = true;
   if (app.pain >= 7) { $('painNote').classList.add('show'); toast('Your pain check-in is noted. Follow your care team’s guidance before deciding whether to exercise.'); }
   app.manual = manual; app.reps = 0; app.phase = 'ready'; app.sessionStartAngle = null; app.sessionAngles = []; app.waveSide = null; app.waveSwitches = 0; app.startedAt = Date.now(); app.activeSessionId = crypto.randomUUID?.() || String(Date.now());
   waveCounter.reset();
-  $('repCount').textContent = '0';
+  $('repCount').textContent = '0'; $('repReward').textContent = '';
+  const target = $('exerciseSelect').value === 'wave' ? 0 : Number(readPlan().reps);
+  $('repGoal').textContent = Number.isInteger(target) && target > 0 ? '0 / ' + target + ' session goal' : 'One comfortable rep at a time';
   if (manual) {
     $('cameraEmpty').style.display = 'grid'; $('video').style.display = 'none'; app.stream?.getTracks().forEach((track) => track.stop()); app.stream = null;
     $('overlay').getContext('2d').clearRect(0, 0, $('overlay').width, $('overlay').height); $('manualCounter').style.display = 'flex';
+    $('setupTitle').textContent = 'Manual session'; $('setupCopy').textContent = 'Use Add rep below to record each completed repetition.';
     $('trackingTitle').textContent = 'Manual logging'; $('trackingCopy').textContent = 'Add reps below.';
     cameraState('Manual', 'good', 'Camera off · add reps below.', 'Manual');
   } else $('manualCounter').style.display = 'none';
@@ -359,18 +375,35 @@ function endSession() {
     confidence: app.confidence, pain: app.pain, note: $('note').value.trim(), manual: app.manual, checkin: false,
   };
   companion?.finish(row);
+  $('newSession').hidden = false;
+  $('movement').dataset.sessionActive = 'false'; $('movement').dataset.manual = 'false';
+  $('setupTitle').textContent = 'Set up your camera'; $('setupCopy').textContent = activeMovement().prompt || activeMovement().frame;
+  document.querySelectorAll('[data-movement]').forEach(button => { button.disabled = false; });
   app.running = false; $('exerciseSelect').disabled = false; $('bodySide').disabled = demo; $('manualCounter').style.display = 'none'; $('repBadge').classList.remove('show'); $('stageStop').classList.remove('show');
   $('startBtn').textContent = demo ? 'Start camera check' : 'Start camera session';
   $('startBtn').disabled = !app.stream || !app.landmarker;
-  if (demo) { app.manual = false; app.activeSessionId = null; toast(`Wave demo done · ${row.reps} cycles.`); return; }
+  if (demo) { app.manual = false; app.activeSessionId = null; $('trackingTitle').textContent = 'Camera check complete'; $('trackingCopy').textContent = 'Choose an exercise above for a saved session and an end-of-session question.'; toast(`Wave check done · ${row.reps} cycles. Not saved.`); return; }
   const sessions = readSessions(); sessions.push(row); saveSessions(sessions); app.manual = false; app.activeSessionId = null;
   if (row.angle !== null) { $('metricRange').textContent = `${row.angle}°`; $('rangeFoot').textContent = `${row.metric} · estimated peak`; }
   else { $('metricRange').textContent = '—'; $('rangeFoot').textContent = 'camera angle unavailable'; }
   $('metricReps').textContent = String(row.reps); $('repFoot').textContent = `repetitions · ${duration} min`; $('note').value = '';
   if (row.manual) { $('cameraEmpty').style.display = 'grid'; $('video').style.display = 'none'; $('trackingTitle').textContent = 'Camera setup guide'; $('trackingCopy').textContent = activeMovement().frame; cameraState('Camera off', 'neutral', 'Allow camera to check framing.', '0 joints'); }
+  $('trackingTitle').textContent = 'Session complete'; $('trackingCopy').textContent = `${row.reps} repetition${row.reps === 1 ? '' : 's'} saved. Add a note below, or start another session when you’re ready.`;
   render(); toast('Session saved.');
 }
 $('stageStop').onclick = endSession;
+$('newSession').onclick = () => {
+  if (app.running) return;
+  companion?.reset();
+  app.reps = 0; app.phase = 'ready'; app.sessionStartAngle = null;
+  app.sessionAngles = []; app.activeSessionId = null; waveCounter.reset();
+  $('repCount').textContent = '0'; $('repReward').textContent = '';
+  $('repGoal').textContent = 'Ready for your next session';
+  $('newSession').hidden = true;
+  $('trackingTitle').textContent = 'Ready for a new session';
+  $('trackingCopy').textContent = 'Your previous result is saved. Start a camera session or log manually.';
+  $('movement').scrollIntoView({ behavior:'smooth', block:'start' });
+};
 
 $('saveCheckin').onclick = () => {
   if (app.confidence === null && app.pain === null && !$('note').value.trim()) { toast('Add a rating or note first.'); return; }
@@ -380,6 +413,7 @@ $('saveCheckin').onclick = () => {
 
 function updateMovementUI() {
   const movement = $('exerciseSelect').value; const wave = movement === 'wave'; const cfg = activeMovement();
+  document.querySelectorAll('[data-movement]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.movement === movement)));
   $('exerciseTitle').textContent = wave ? 'Camera wave demo' : cfg.title;
   if ($('homeExercise')) $('homeExercise').textContent = wave ? 'Camera wave demo' : cfg.title;
   if ($('homePlanCopy')) $('homePlanCopy').textContent = wave ? 'Camera demo · not saved' : movement === 'sit' ? '2 sets · 8 reps · camera optional' : 'Camera optional · follow your plan.';
@@ -390,7 +424,7 @@ function updateMovementUI() {
     : `<strong>Follow your physio’s plan.</strong> ${cfg.title} · camera angle is an estimate.`;
   $('trackingCopy').textContent = cfg.frame; $('setupTitle').textContent = wave ? 'Show one arm' : 'Set up your camera';
   $('setupCopy').textContent = wave ? 'Face camera. Raise hand and wave.' : cfg.prompt;
-  $('enableCamera').textContent = wave ? 'Enable camera' : 'Set up camera';
+  $('enableCamera').textContent = 'Enable camera';
   $('cameraRequirement').textContent = wave ? 'Camera needed' : 'Camera optional';
   $('stage').classList.toggle('wave-mode', wave); $('manualBtn').disabled = wave; $('manualBtn').style.opacity = wave ? '.45' : '';
   $('manualBtn').title = wave ? 'Camera required for demo' : 'Log without camera';
@@ -861,6 +895,14 @@ companion = createCompanion({
   render,
   getPhase: () => app.phase,
   getMovement: () => $('exerciseSelect').value,
+  onRep: ({ reps, targetReps, goalReached }) => {
+    $('repReward').textContent = goalReached ? 'Goal complete ✨' : '+1 · Nice rep!';
+    $('repReward').classList.remove('celebrate');
+    void $('repReward').offsetWidth;
+    $('repReward').classList.add('celebrate');
+    $('repBadge').animate?.([{ transform:'scale(1)' }, { transform:'scale(1.12)', offset:.25 }, { transform:'scale(1)' }], { duration:380 });
+    $('repGoal').textContent = targetReps ? Math.min(reps, targetReps) + ' / ' + targetReps + ' session goal' : reps + (reps === 1 ? ' rep completed' : ' reps completed');
+  },
   resetIncompleteCycle: () => { app.phase = 'ready'; app.sessionStartAngle = null; }
 });
 startAuth0();

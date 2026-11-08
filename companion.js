@@ -1,46 +1,77 @@
 import { SessionMetrics, localQuestion, feedbackText } from './session-metrics.js';
+import { createRepChime } from './rep-sound.js';
 
 export function createCompanion(options) {
   const panel = document.createElement('section');
-  panel.className = 'card panel';
+  panel.className = 'card panel session-companion';
   panel.style.marginTop = '16px';
   panel.innerHTML = `
-    <h2>Session companion</h2>
-    <p>Camera and manual sessions stay in the local journal. Gemini uses only the explicitly fictional demo below.</p>
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-      <label><input type="checkbox" data-id="enabled"> Spoken feedback</label>
-      <label>Mode <select data-id="mode"><option value="concise">Concise</option><option value="encouraging">Encouraging</option><option value="quiet">Quiet</option></select></label>
-      <label>Speech <select data-id="source"><option value="browser">Browser voice</option><option value="gemini">Cached Gemini / browser fallback</option></select></label>
-      <label>Browser voice <select data-id="voice"><option value="">System default</option></select></label>
-      <button type="button" class="secondary" data-id="preview">Preview voice</button>
-      <button type="button" class="secondary" data-id="testRep">Test rep sound</button>
-      <button type="button" class="secondary" data-id="stop">Stop speaking</button>
+    <div class="companion-heading">
+      <div class="companion-name"><span class="voice-symbol" aria-hidden="true">◖◗</span><div><h2>Your companion</h2><p>Hear encouragement. Keep your eyes on your movement.</p></div></div>
+      <label class="voice-toggle"><input type="checkbox" data-id="enabled" checked><span data-id="voiceLabel">Voice on</span></label>
     </div>
-    <p data-id="status" role="status">Checking local backend…</p>
-    <p data-id="activity">No active session. Start a camera session or use Manual log.</p>
-    <p data-id="event" aria-live="polite"></p>
-    <hr>
-    <button type="button" class="secondary" data-id="demo" disabled>Load fictional Gemini demo</button>
-    <small>Uses a fixed fictional 8/10-rep session, not your camera measurements. A missing question uses Gemini text quota.</small>
-    <div data-id="followup" hidden>
-      <p><strong data-id="kind"></strong></p>
-      <p data-id="question"></p>
-      <button type="button" class="secondary" data-id="read">Read question aloud</button>
-      <label style="display:block">Optional session explanation
-        <textarea data-id="answer" maxlength="2000" rows="3" style="width:100%"></textarea>
-      </label>
-      <button type="button" class="secondary" data-id="save">Save explanation</button>
-      <button type="button" class="secondary" data-id="report">Show local summary</button>
-      <pre data-id="summary" style="white-space:pre-wrap;overflow-wrap:anywhere" hidden></pre>
-    </div>`;
+    <div class="companion-toolbar">
+      <div class="voice-modes" role="group" aria-label="Companion style">
+        <button type="button" data-id="modeQuiet" aria-pressed="false">Quiet<span>Only tracking alerts</span></button>
+        <button type="button" data-id="modeConcise" aria-pressed="false">Concise<span>Short, simple cues</span></button>
+        <button type="button" data-id="modeEncouraging" aria-pressed="true">Encouraging<span>A little motivation</span></button>
+      </div>
+      <select data-id="mode" hidden aria-label="Companion style"><option value="quiet">Quiet</option><option value="concise">Concise</option><option value="encouraging" selected>Encouraging</option></select>
+    </div>
+    <p class="companion-activity" data-id="activity">Ready when you are. Start a session above.</p>
+    <p class="companion-event" data-id="event" aria-live="polite"></p>
+    <details class="voice-settings"><summary>Voice settings</summary>
+      <div class="voice-settings-grid">
+        <label>Browser backup voice<select data-id="voice"><option value="">System default</option></select></label>
+        <label>Playback<select data-id="source"><option value="gemini" selected>Gemini voice · browser backup</option><option value="browser">Browser voice only</option></select></label>
+      </div>
+      <div class="companion-actions"><button type="button" class="secondary" data-id="preview">Preview voice</button><button type="button" class="quiet" data-id="stop">Stop speaking</button></div>
+      <p class="companion-technical" data-id="status" role="status">Checking saved sessions…</p>
+    </details>
+    <div class="companion-followup" data-id="followup" hidden>
+      <span class="followup-eyebrow">A moment to reflect</span>
+      <p class="followup-question" data-id="question"></p>
+      <button type="button" class="quiet" data-id="read">Listen to question</button>
+      <label>Your note <span>Optional</span><textarea data-id="answer" maxlength="2000" rows="3" placeholder="Anything you’d like your physio to know?"></textarea></label>
+      <div class="companion-actions"><button type="button" class="primary" data-id="save">Save note</button><button type="button" class="secondary" data-id="report">View session summary</button></div>
+      <p class="companion-technical" data-id="kind"></p>
+      <pre class="companion-summary" data-id="summary" hidden></pre>
+    </div>
+    <details class="companion-demo"><summary>Explore the fictional AI demo</summary>
+      <p>Try a Gemini follow-up using a fictional session. Your camera measurements stay in your local journal.</p>
+      <div class="companion-actions"><button type="button" class="secondary" data-id="demo" disabled>Load fictional session</button><button type="button" class="quiet" data-id="testRep">Preview rep chime</button></div>
+    </details>
+`;
   document.querySelector('#movement').after(panel);
   const el = id => panel.querySelector(`[data-id="${id}"]`);
   let online = false, run = null, current = null, audio = null, utterance = null;
   let voiceVersion = 0, viewVersion = 0, busy = false;
   let voices = [], manifests = {}, demoPayload = null;
   let preferredVoice = '';
-  let pendingRep = false, pendingQuestion = null;
+  let pendingQuestion = null, goalCelebrated = false;
+  const chime = createRepChime();
   try { preferredVoice = localStorage.getItem('exercise-demo-browser-voice') || ''; } catch {}
+  el('enabled').checked = true;
+  el('mode').value = 'encouraging';
+  el('source').value = 'gemini';
+  try {
+    const prefs = JSON.parse(localStorage.getItem('formnote-companion-preferences') || 'null');
+    if (prefs) {
+      el('enabled').checked = prefs.enabled !== false;
+      if (['quiet', 'concise', 'encouraging'].includes(prefs.mode)) el('mode').value = prefs.mode;
+      if (prefs.version === 2 && ['browser', 'gemini'].includes(prefs.source)) el('source').value = prefs.source;
+    }
+  } catch {}
+  function saveVoicePreferences() {
+    try { localStorage.setItem('formnote-companion-preferences', JSON.stringify({ version: 2, enabled: el('enabled').checked, mode: el('mode').value, source: el('source').value })); } catch {}
+  }
+  function syncVoiceControls() {
+    el('voiceLabel').textContent = el('enabled').checked ? 'Voice on' : 'Voice muted';
+    const quickVoice = document.getElementById?.('practiceVoice');
+    if (quickVoice) { quickVoice.textContent = el('voiceLabel').textContent; quickVoice.ariaPressed = String(el('enabled').checked); }
+    for (const mode of ['quiet', 'concise', 'encouraging']) el('mode' + mode[0].toUpperCase() + mode.slice(1)).ariaPressed = String(el('mode').value === mode);
+  }
+  syncVoiceControls(); saveVoicePreferences();
   const status = text => { el('status').textContent = text; };
 
   async function request(path, body, method = 'POST') {
@@ -56,7 +87,7 @@ export function createCompanion(options) {
     return data;
   }
   function stop() {
-    pendingRep = false; pendingQuestion = null;
+    pendingQuestion = null;
     voiceVersion++;
     if (audio) { audio.pause(); audio = null; }
     window.speechSynthesis?.cancel(); utterance = null;
@@ -68,7 +99,7 @@ export function createCompanion(options) {
     const selected = voices.find(v => v.voiceURI === el('voice').value);
     if (selected) utterance.voice = selected;
     utterance.lang = selected?.lang || 'en-US'; utterance.rate = .95;
-    utterance.onend = () => { if (version === voiceVersion) { utterance = null; status('Ready · browser voice.'); flushRep(); flushQuestion(); } };
+    utterance.onend = () => { if (version === voiceVersion) { utterance = null; status('Ready · browser voice.'); flushQuestion(); } };
     utterance.onerror = () => { if (version === voiceVersion) { utterance = null; status('Browser speech unavailable. Try another voice.'); } };
     status(prefix + 'Speaking with browser voice.'); window.speechSynthesis.speak(utterance);
   }
@@ -80,26 +111,24 @@ export function createCompanion(options) {
   populateVoices(); window.speechSynthesis?.addEventListener('voiceschanged', populateVoices);
   el('voice').onchange = () => { stop(); preferredVoice = el('voice').value; try { localStorage.setItem('exercise-demo-browser-voice', preferredVoice); } catch {} };
   el('stop').onclick = () => { stop(); status('Speech stopped. Future session events may speak.'); };
-  el('testRep').onclick = () => { stop(); event('rep_completed'); };
-  el('preview').onclick = () => { stop(); browserSpeak('Hello. This is your selected companion voice.'); };
-  el('mode').onchange = () => { stop(); status('Mode changed. It will apply to subsequent events.'); };
-  el('source').onchange = stop;
+  el('testRep').onclick = () => { chime.unlock(); event('rep_completed'); };
+  el('preview').onclick = () => { stop(); event('session_started'); };
+  el('mode').onchange = () => { stop(); syncVoiceControls(); saveVoicePreferences(); status('Companion style updated.'); };
+  for (const mode of ['quiet', 'concise', 'encouraging']) el('mode' + mode[0].toUpperCase() + mode.slice(1)).onclick = () => { el('mode').value = mode; el('mode').onchange(); };
+  el('source').onchange = () => { stop(); saveVoicePreferences(); };
   el('enabled').onchange = () => {
-    stop();
+    stop(); syncVoiceControls(); saveVoicePreferences();
     if (el('enabled').checked) browserSpeak('Spoken feedback is enabled.');
     else status('Spoken feedback disabled.');
   };
 
+  const quickVoice = document.getElementById?.('practiceVoice');
+  if (quickVoice) quickVoice.onclick = () => { el('enabled').checked = !el('enabled').checked; el('enabled').onchange(); };
+
   function updateActivity() {
-    if (!run) { el('activity').textContent = 'No active session. Start a camera session or use Manual log.'; return; }
+    if (!run) { el('activity').textContent = 'Ready when you are. Start a session above.'; return; }
     const labels = { sit: 'Sit-to-stand', reach: 'Overhead reach', elbow: 'Elbow bend', wave: 'Camera wave check (not saved)' };
     el('activity').textContent = 'Active: ' + (labels[run.config.movement] || run.config.movement) + ' · ' + run.reps + ' reps recorded.';
-  }
-
-  function flushRep() {
-    if (!pendingRep) return;
-    pendingRep = false;
-    if (run && !run.lost && el('enabled').checked) event('rep_completed');
   }
 
   function flushQuestion() {
@@ -109,25 +138,45 @@ export function createCompanion(options) {
     if (queued.view !== viewVersion || queued.voice !== voiceVersion ||
         current?.question !== queued.text || !el('enabled').checked || el('mode').value === 'quiet') return;
     stop();
-    browserSpeak(queued.text);
+    speakLocalQuestion(queued.text);
+  }
+
+  async function speakLocalQuestion(text) {
+    const mode = el('mode').value, version = voiceVersion;
+    const clip = Object.values(manifests[mode]?.clips || {}).find(clip => clip?.text === text && clip.fileName);
+    if (el('source').value === 'gemini' && clip) {
+      audio = new Audio('/voice-assets/' + encodeURIComponent(clip.fileName));
+      const fallback = () => { if (version === voiceVersion) { audio = null; browserSpeak(text, 'Gemini clip unavailable. '); } };
+      audio.onended = () => { if (version === voiceVersion) audio = null; };
+      audio.onerror = fallback;
+      try { await audio.play(); return; } catch { fallback(); return; }
+    }
+    browserSpeak(text, el('source').value === 'gemini' ? 'Matching Gemini clip not prepared; browser backup. ' : '');
   }
 
   async function event(name) {
     const mode = el('mode').value;
+    if (name === 'rep_completed') {
+      const count = run?.reps || 1, target = run?.config.targetReps;
+      const goal = !goalCelebrated && Number.isInteger(target) && target > 0 && count === target;
+      if (goal) goalCelebrated = true;
+      options.onRep?.({ reps: count, targetReps: target, goalReached: goal });
+      el('event').textContent = goal ? 'Your session goal is complete. Nice work!' : 'Nice rep!';
+      if (el('enabled').checked && mode !== 'quiet') {
+        if (!chime.play(goal)) status('Rep recorded. Sound is unavailable in this browser.');
+      }
+      return;
+    }
     const text = feedbackText(name, mode, run?.config.movement || options.getMovement());
     el('event').textContent = text || name.replaceAll('_', ' ') + ' · staying silent';
     if (!text || !el('enabled').checked) return;
     const clip = manifests[mode]?.clips?.[name];
-    if (name === 'rep_completed' && (audio || window.speechSynthesis?.speaking)) {
-      pendingRep = true;
-      return;
-    }
     stop(); const version = voiceVersion;
     // Cached audio is valid only when its transcript matches the current message.
     // Old arm-only recordings must not override exercise-specific joint guidance.
     if (el('source').value === 'gemini' && clip?.fileName && clip.text === text) {
       audio = new Audio('/voice-assets/' + encodeURIComponent(clip.fileName));
-      audio.onended = () => { if (version === voiceVersion) { audio = null; flushRep(); flushQuestion(); } };
+      audio.onended = () => { if (version === voiceVersion) { audio = null; flushQuestion(); } };
       audio.onerror = () => {
         if (version !== voiceVersion) return;
         audio = null;
@@ -148,13 +197,14 @@ export function createCompanion(options) {
     el('answer').value = value.answer || '';
     el('answer').disabled = value.kind === 'synthetic' && value.answer !== null;
     el('save').disabled = el('answer').disabled;
-    el('report').textContent = value.kind === 'synthetic' ? 'Generate fictional Gemini report' : 'Show local summary';
+    el('report').textContent = value.kind === 'synthetic' ? 'Generate fictional Gemini report' : 'View session summary';
   }
   el('read').onclick = async () => {
     if (!current || busy) return;
     stop(); const version = voiceVersion, selected = current;
     if (el('mode').value === 'quiet') { status('Quiet mode: question stays on screen.'); return; }
-    if (selected.kind !== 'synthetic' || el('source').value !== 'gemini') { browserSpeak(selected.question); return; }
+    if (selected.kind !== 'synthetic') { speakLocalQuestion(selected.question); return; }
+    if (el('source').value !== 'gemini') { browserSpeak(selected.question); return; }
     busy = true; status('Preparing fictional Gemini question audio…');
     try {
       const result = await request(`/api/follow-ups/${encodeURIComponent(selected.followUpId)}/audio`, {});
@@ -235,9 +285,16 @@ export function createCompanion(options) {
   reloadHistory();
   return {
     reloadHistory,
-    start(config) {
+    reset() {
+      if (run) return false;
       stop(); current = null; viewVersion++; el('followup').hidden = true;
-      run = new SessionMetrics(config);
+      el('event').textContent = ''; updateActivity();
+      return true;
+    },
+    start(config) {
+      chime.unlock(); goalCelebrated = false;
+      stop(); current = null; viewVersion++; el('followup').hidden = true;
+      run = new SessionMetrics({ ...config, targetReps: config.movement === 'wave' ? null : config.targetReps });
       updateActivity();
       event('session_started');
     },
@@ -273,6 +330,8 @@ export function createCompanion(options) {
       if (!run) return;
       if (run.config.movement === 'wave') {
         run = null; updateActivity(); event('session_ended');
+        el('activity').textContent = 'Camera check complete · not saved';
+        el('event').textContent = 'This was a framing test. Choose an exercise for a saved session and a reflection question.';
         status('Camera check finished. Wave counts are not saved to your journal.');
         return;
       }

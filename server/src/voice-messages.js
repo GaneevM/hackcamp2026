@@ -12,7 +12,7 @@ export const voiceMessages = {
     session_started:
       "Session started.",
     rep_completed:
-      "Repetition recorded.",
+      null,
     tracking_lost:
       "Tracking paused. Keep your joints needed for this movement in view.",
     tracking_restored:
@@ -25,7 +25,7 @@ export const voiceMessages = {
     session_started:
       "Your session has started. You can pause whenever you need.",
     rep_completed:
-      "Another repetition recorded.",
+      null,
     tracking_lost:
       "Tracking is paused. When you're ready, check that the camera can see your joints needed for this movement.",
     tracking_restored:
@@ -34,6 +34,13 @@ export const voiceMessages = {
       "Your session has ended."
   }
 };
+
+for (const mode of ['concise', 'encouraging']) Object.assign(voiceMessages[mode], {
+  question_goal: 'Would you like to add context about ending below the repetition goal?',
+  question_tracking: 'Would you like to add context about the tracking interruptions?',
+  question_cycle: 'Would you like to add context about the incomplete movement cycles?',
+  question_general: 'Would you like to add any context about this session?'
+});
 
 export function getVoiceMessage(event, mode = "concise") {
   if (!Object.hasOwn(voiceMessages, mode)) {
