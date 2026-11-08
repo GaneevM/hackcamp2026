@@ -319,8 +319,14 @@ function finishPointerCalibration(state) {
   catch { pointerToast('Could not save calibration in this browser.');cancelPointerCalibration();return; }
   airPointer.map=map;airPointer.calibration=null;$('pointerCalibration').hidden=true;airPointer.mustRelease=true;airPointer.releaseAt=null;setPointerEnabled(true);
   $('airPointerCalibrate').disabled=false;
-  pointerStatus('Point at Start or Finish & save; hold until the ring completes.');
+  pointerStatus('Point at any visible control; hold until the ring completes.');
   pointerToast('Air pointer calibrated on this device.');
+}
+function pointerTargetAt(x,y) {
+  const selector='button:not(:disabled),a[href],summary,select:not(:disabled),input:not([type="hidden"]):not(:disabled),textarea:not(:disabled),label[for],[role="button"],[role="tab"],[role="checkbox"],[role="switch"],[role="menuitem"],[role="link"],[role="option"]';
+  const target=document.elementFromPoint(x,y)?.closest(selector);
+  if(!target||target.matches(':disabled,[aria-disabled="true"]')||target.closest('[hidden],[inert],[aria-hidden="true"]'))return null;
+  return target.getClientRects().length?target:null;
 }
 function processPointerHand(result,now) {
   const hand=result?.landmarks?.[0];
@@ -349,7 +355,7 @@ function processPointerHand(result,now) {
   if(!hand||!isIndexPointing(hand)){
     $('airPointerCursor').hidden=true;
     resetPointerDwell();
-    if(airPointer.mustRelease){if(airPointer.releaseAt===null)airPointer.releaseAt=now;if(now-airPointer.releaseAt>=450){airPointer.mustRelease=false;airPointer.releaseAt=null;pointerStatus('Pointer ready. Point at Start or Finish & save.');}else pointerStatus('Release your index finger to arm another action.');}
+    if(airPointer.mustRelease){if(airPointer.releaseAt===null)airPointer.releaseAt=now;if(now-airPointer.releaseAt>=450){airPointer.mustRelease=false;airPointer.releaseAt=null;pointerStatus('Pointer ready. Point at any visible control.');}else pointerStatus('Release your pointing finger to arm another action.');}
     else if(airPointer.enabled)pointerStatus(hand?'Extend your index finger and curl the others.':'Show one hand to the camera.');
     return;
   }
@@ -360,17 +366,19 @@ function processPointerHand(result,now) {
   airPointer.map=expected;
   const mapped=mapFingerToScreen(airPointer.map,point);if(!mapped)return;
   const x=mapped.x*window.innerWidth,y=mapped.y*window.innerHeight;
-  const cursor=$('airPointerCursor');cursor.hidden=false;cursor.style.left=`${x}px`;cursor.style.top=`${y}px`;
+  const cursor=$('airPointerCursor'),openDialog=document.querySelector('dialog[open]'),cursorLayer=openDialog||document.body;
+  if(cursor.parentElement!==cursorLayer)cursorLayer.append(cursor);
+  cursor.hidden=false;cursor.style.left=`${x}px`;cursor.style.top=`${y}px`;
   if(airPointer.mustRelease){airPointer.releaseAt=null;pointerStatus('Release your pointing finger to arm another action.');return;}
-  const onPractice=document.querySelector('.app-screen[data-screen-view="move"]')?.classList.contains('screen-active');
-  const hit=onPractice&&!document.querySelector('dialog[open]')?document.elementFromPoint(x,y)?.closest('#startBtn,#stageStop'):null;
-  const target=hit&&!hit.disabled&&hit.getClientRects().length?hit:null;
-  if(!target){resetPointerDwell();pointerStatus('Point at Start or Finish & save; other controls stay manual.');return;}
+  const target=pointerTargetAt(x,y);
+  if(!target){resetPointerDwell();pointerStatus('Point at a visible button, tab, or control and hold.');return;}
   if(airPointer.candidate!==target){resetPointerDwell();airPointer.candidate=target;airPointer.dwellAt=now;target.classList.add('air-hover-target');}
-  const duration=target.id==='stageStop'?2200:1600,progress=Math.min(1,(now-airPointer.dwellAt)/duration);
+  const label=(target.getAttribute('aria-label')||target.innerText||target.textContent||target.title||'Control').replace(/\s+/g,' ').trim().slice(0,48);
+  const duration=target.id==='stageStop'||/delete|clear|remove|sign out|log out|finish/i.test(label)?2200:target.id==='startBtn'?1600:target.id==='capturePhoto'?1400:1300;
+  const progress=Math.min(1,(now-airPointer.dwellAt)/duration);
   cursor.style.setProperty('--dwell',`${progress*100}%`);
-  pointerStatus(`${target.id==='stageStop'?'Finish & save':'Start session'} · hold ${Math.max(0,Math.ceil((duration-(now-airPointer.dwellAt))/1000))}s`);
-  if(progress>=1){const label=target.id==='stageStop'?'Finish & save':'Start session';target.click();airPointer.mustRelease=true;airPointer.releaseAt=null;resetPointerDwell();pointerStatus('Action activated. Release your index finger to use the pointer again.');pointerToast(`${label} activated.`);}
+  pointerStatus(`${label||'Control'} · hold ${Math.max(0,Math.ceil((duration-(now-airPointer.dwellAt))/1000))}s`);
+  if(progress>=1){target.click();airPointer.mustRelease=true;airPointer.releaseAt=null;resetPointerDwell();pointerStatus('Action activated. Release your index finger to use the pointer again.');pointerToast(`${label||'Control'} activated.`);}
 }
 async function toggleAirPointer() {
   if(airPointer.enabled){setPointerEnabled(false);pointerStatus('Air pointer off.');return;}
@@ -1161,7 +1169,8 @@ function buildAppScreens() {
     if (activeScreen === 'move' && key !== 'move' && app.running) { toast('Finish the active session before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.autoCalibration.active) { toast('Finish calibration before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.countdownActive) cancelCountdown();
-    if (activeScreen === 'move' && key !== 'move' && (app.stream || app.cameraAcquiring)) {
+    const keepCameraForPointer=airPointer.enabled&&!airPointer.calibration;
+    if (activeScreen === 'move' && key !== 'move' && (app.stream || app.cameraAcquiring) && !keepCameraForPointer) {
       app.cameraRequest++; app.cameraAcquiring = false;
       setPointerEnabled(false);if(airPointer.calibration)cancelPointerCalibration();
       app.stream?.getTracks().forEach((track) => track.stop()); app.stream = null; cancelAnimationFrame(app.raf); app.raf = 0;
