@@ -28,6 +28,11 @@ test('seated-start geometry rejects standing and accepts a seated thigh at diffe
   assert.equal(seatedStart({shoulder:p(0,0),hip:p(0,.2),knee:p(.015,.4),aspect:16/9}),false);
  }
 });
+test('sit-to-stand start recognizes seated knee flexion when 2D pose geometry varies',()=>{
+ const p=(x,y)=>({x,y,visibility:.9});
+ assert.equal(seatedStart({hip:p(.5,.45),knee:p(.54,.65),ankle:p(.7,.85),angle:82}),true);
+ assert.equal(seatedStart({hip:p(.5,.45),knee:p(.54,.65),ankle:p(.7,.85),angle:18}),false);
+});
 test('sit-to-stand never arms from an upright/walking start',()=>{const h=harness('sit',90,10);h.set({context:{seated:false,bodyScale:.18}});for(let i=0;i<4;i++)h.cycle();assert.equal(h.counter.reps,0);});
 test('cross-body hold duration excludes the slow return to rest',()=>{const h=harness('crossbody',0,75);h.cycle();assert.equal(h.counter.reps,1);assert.ok(h.counter.holds[0]>=.6&&h.counter.holds[0]<1.6,h.counter.holds[0]);});
 test('counter reset starts a new session at zero',()=>{const h=harness('elbow',20,95);h.cycle();assert.equal(h.counter.reps,1);h.counter.reset();assert.equal(h.counter.reps,0);assert.deepEqual(h.counter.holds,[]);});

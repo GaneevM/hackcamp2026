@@ -612,10 +612,10 @@ function poseAnchor(landmarks) {
     y: points.reduce((sum, point) => sum + point.y, 0) / points.length };
 }
 
-function isSeatedStart(landmarks) {
+function isSeatedStart(landmarks, angle=app.currentAngle) {
   const ids=bodyPoints[app.side];
   if(!['hip','knee','ankle'].every(key=>visible(landmarks,key)))return false;
-  return seatedStart({hip:landmarks[ids.hip],knee:landmarks[ids.knee],ankle:landmarks[ids.ankle],aspect:$('video').videoWidth/$('video').videoHeight||1});
+  return seatedStart({hip:landmarks[ids.hip],knee:landmarks[ids.knee],ankle:landmarks[ids.ankle],angle,aspect:$('video').videoWidth/$('video').videoHeight||1});
 }
 
 function updateMovementCounter(landmarks, now) {

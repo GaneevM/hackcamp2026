@@ -1,7 +1,10 @@
 // Camera rep gates, not clinical target angles. Valid personal ranges take precedence.
 const supported=new Set(['sit','reach','elbow','crossbody']);
 const finitePoint=p=>p&&Number.isFinite(p.x)&&Number.isFinite(p.y);
-export function seatedStart({shoulder,hip,knee,ankle,aspect=1}){
+export function seatedStart({shoulder,hip,knee,ankle,angle,aspect=1}){
+ // Knee flexion is the most reliable seated cue across camera heights and
+ // body proportions. Geometry remains a fallback for callers without an angle.
+ if(Number.isFinite(angle))return angle>=45;
  if(![hip,knee].every(p=>finitePoint(p)&&(p.visibility??p.presence??1)>.55))return false;
  const thigh=Math.hypot((hip.x-knee.x)*aspect,hip.y-knee.y);
  if(thigh<=.025||Math.abs(hip.y-knee.y)>thigh*.55)return false;
