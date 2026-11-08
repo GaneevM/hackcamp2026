@@ -817,7 +817,7 @@ function beginSession(manual = false) {
   const plannedReps = Number(readPlan().reps);
   companion?.start({ manual, movement: $('exerciseSelect').value,
     targetReps: Number.isInteger(plannedReps) && plannedReps > 0 && plannedReps <= 200 ? plannedReps : null });
-  liveFeedback.start({manual,movement:$('exerciseSelect').value,side:$('bodySide').value,variant:pushupVariant()});
+  liveFeedback.start({manual,movement:$('exerciseSelect').value,side:$('bodySide').value,...($('exerciseSelect').value==='pushup'?{variant:pushupVariant()}:{})});
   if(manual) setActive(true); else startCountdown();
 }
 
@@ -1674,7 +1674,7 @@ companion = createCompanion({
   },
   resetIncompleteCycle: () => { app.phase = 'ready'; app.sessionStartAngle = null; }
 });
-liveFeedback = createLiveFeedback({getSession:()=>app.running&&!app.manual&&!app.cameraPaused?{manual:false,movement:$('exerciseSelect').value,side:$('bodySide').value,variant:pushupVariant()}:null});
+liveFeedback = createLiveFeedback({getSession:()=>app.running&&!app.manual&&!app.cameraPaused?{manual:false,movement:$('exerciseSelect').value,side:$('bodySide').value,...($('exerciseSelect').value==='pushup'?{variant:pushupVariant()}:{})}:null});
 carePages = createCarePages({ getScope:()=>activeDataScope, getRows:readSessions, setRows:saveSessions, getMovement:()=> $('exerciseSelect').value,
   getPlan:readPlan, getName:()=>authUser?.name || '', navigate:key=>appNavigation.switchTo(key), chooseMovement:movement=>{if(app.running||app.autoCalibration.active){toast('Finish the current session or calibration first.');return;}$('exerciseSelect').value=movement;$('exerciseSelect').dispatchEvent(new Event('change'));appNavigation.switchTo('move');}, clearCheckin:clearCheckinAnswers });
 // Pressing Back from the Auth0 page restores this page from memory with the buttons still disabled.
