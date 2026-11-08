@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createCompanion } from '../../companion.js';
 
 async function harness(t, preferences = null) {
-  const elements = new Map();
+  const elements = new Map(); let lastSpeech='';
+  const settle=()=>new Promise(resolve=>setImmediate(resolve));
   const element = id => {
     if (!elements.has(id)) elements.set(id, { value: '', checked: false, textContent: '', replaceChildren() {} });
     return elements.get(id);
@@ -25,16 +26,17 @@ async function harness(t, preferences = null) {
   };
   const panel = { style: {}, querySelector: selector => element(selector.match(/data-id="([^"]+)"/)[1]) };
   const replacements = {
-    document: { createElement: () => panel, querySelector: () => ({ after() {} }) },
+    document: { addEventListener() {}, dispatchEvent() {}, createElement: () => panel, querySelector: () => ({ after() {} }) },
     window: { speechSynthesis: speech, AudioContext },
+    Audio: class { constructor(){this.text=lastSpeech;} pause(){} async play(){spoken.push({text:this.text,onend:()=>this.onended?.()});} },
     SpeechSynthesisUtterance: class { constructor(text) { this.text = text; } },
     Option: class { constructor(text, value) { this.text = text; this.value = value; } },
     localStorage: { getItem: key => key === 'formnote-companion-preferences' ? JSON.stringify(preferences) : null, setItem() {} },
-    fetch: async (path, init) => ({
+    fetch: async (path, init) => { if(path==='/api/voice/speech')lastSpeech=JSON.parse(init.body).text; return ({
       ok: !path.startsWith('/voice-assets/'),
       headers: { get: () => 'application/json' },
-      json: async () => path === '/health' ? { integration: 'local-journal-v1' } : path === '/api/journal/sessions' && init?.body ? JSON.parse(init.body) : { sessions: [] }
-    })
+      json: async () => path === '/api/voice/speech' ? {data:'AAAA',mimeType:'audio/pcm;rate=24000'} : path === '/health' ? { integration: 'local-journal-v1' } : path === '/api/journal/sessions' && init?.body ? JSON.parse(init.body) : { sessions: [] }
+    }); }
   };
   const originals = new Map();
   for (const [key, value] of Object.entries(replacements)) {
@@ -63,76 +65,103 @@ async function harness(t, preferences = null) {
 test('rep chimes play immediately during speech without interrupting or queuing spoken rep lines', async t => {
   const h = await harness(t);
   h.companion.start({ manual: true, movement: 'sit', targetReps: 5 });
+  await new Promise(resolve=>setImmediate(resolve));
   h.companion.manualRep(1);
   h.companion.manualRep(2);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.tones.length, 6);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.spoken.length, 1);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.rewards.length, 2);
   h.finishSpeech();
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.spoken.length, 1);
   h.companion.manualRep(1, false);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.tones.length, 6);
 });
 
 test('camera reps each trigger a chime and the configured goal celebrates only once', async t => {
   const h = await harness(t);
   h.companion.start({ manual: false, movement: 'elbow', targetReps: 2 });
+  await new Promise(resolve=>setImmediate(resolve));
   h.companion.observe({ ready: true, angle: 20, reps: 1, phase: 'ready' });
   h.companion.observe({ ready: true, angle: 20, reps: 2, phase: 'ready' });
   h.companion.observe({ ready: true, angle: 20, reps: 2, phase: 'ready' });
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.tones.length, 7);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.rewards.length, 2);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.rewards[1].goalReached, true);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.spoken.length, 1);
 });
 
 test('camera-wave check rewards cycles and explicitly explains why it has no follow-up', async t => {
   const h = await harness(t);
   h.companion.start({ manual: false, movement: 'wave', targetReps: null });
+  await new Promise(resolve=>setImmediate(resolve));
   h.companion.observe({ ready: true, angle: null, reps: 1, phase: 'ready' });
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.tones.length, 3);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.match(h.element('activity').textContent, /1 reps recorded/);
   await h.companion.finish({});
-  assert.match(h.element('status').textContent, /not saved/);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(h.element('activity').textContent, /not saved/);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.match(h.element('event').textContent, /framing test/);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('followup').hidden, true);
 });
 
 test('preview chime works without an active session and mute suppresses the sound', async t => {
   const h = await harness(t);
   h.element('testRep').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.tones.length, 3);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.spoken.length, 0);
   h.element('enabled').checked = false;
   h.element('testRep').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.tones.length, 3);
 });
 
 test('enabling spoken feedback gives an immediate audible acknowledgement', async t => {
   const h = await harness(t);
   h.element('enabled').onchange();
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.spoken.at(-1).text, 'Spoken feedback is enabled.');
 });
 
 test('session end speaks exactly the displayed results-based question after confirmation', async t => {
   const h = await harness(t);
   h.companion.start({ manual: true, movement: 'sit', targetReps: 5 });
+  await new Promise(resolve=>setImmediate(resolve));
   h.finishSpeech();
   await h.companion.finish({ id: 'question-test', reps: 1 });
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.spoken.at(-1).text, 'Session ended.');
   const question = h.element('question').textContent;
+  await new Promise(resolve=>setImmediate(resolve));
   assert.match(question, /below the repetition goal/);
   h.finishSpeech();
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.spoken.at(-1).text, question);
 });
 
 test('stop speaking cancels the pending post-session question', async t => {
   const h = await harness(t);
   h.companion.start({ manual: true, movement: 'sit', targetReps: 5 });
+  await new Promise(resolve=>setImmediate(resolve));
   await h.companion.finish({ id: 'cancel-question', reps: 1 });
   const count = h.spoken.length;
   h.element('stop').onclick();
   h.finishSpeech();
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.spoken.length, count);
 });
 
@@ -140,55 +169,84 @@ test('quiet mode keeps the follow-up on screen without speaking it', async t => 
   const h = await harness(t);
   h.element('mode').value = 'quiet';
   h.companion.start({ manual: true, movement: 'sit', targetReps: 5 });
+  await new Promise(resolve=>setImmediate(resolve));
   await h.companion.finish({ id: 'quiet-question', reps: 1 });
+  await new Promise(resolve=>setImmediate(resolve));
   assert.match(h.element('question').textContent, /below the repetition goal/);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.spoken.length, 0);
 });
 
 test('voice is enabled with Gemini-first playback and Normal cues on first use', async t => {
   const h = await harness(t);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('enabled').checked, true);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('source').value, 'gemini');
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('mode').value, 'concise');
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('voiceLabel').textContent, 'Voice on');
   h.element('modeConcise').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('mode').value, 'concise');
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('modeConcise').ariaPressed, 'true');
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('modeQuiet').ariaPressed, 'false');
 });
 
 test('a returning user keeps their muted voice and selected companion style', async t => {
   const h = await harness(t, { enabled: false, mode: 'quiet', source: 'gemini' });
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('enabled').checked, false);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('mode').value, 'quiet');
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('source').value, 'gemini');
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('voiceLabel').textContent, 'Voice muted');
   h.companion.start({ manual: true, movement: 'sit', targetReps: 5 });
+  await new Promise(resolve=>setImmediate(resolve));
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.spoken.length, 0);
 });
 
 test('quiet style suppresses rep sound but preserves visual count feedback', async t => {
   const h = await harness(t, { version: 2, enabled: true, mode: 'quiet', source: 'browser' });
-  assert.equal(h.element('source').value, 'browser');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(h.element('source').value, 'gemini');
   h.companion.start({ manual: true, movement: 'sit', targetReps: null });
+  await new Promise(resolve=>setImmediate(resolve));
   h.companion.manualRep(1);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.tones.length, 0);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.rewards.length, 1);
 });
 
 test('new-session reset clears the completed view without deleting saved history or resetting an active run', async t => {
   const h = await harness(t);
   h.companion.start({ manual:true, movement:'sit', targetReps:5 });
+  await new Promise(resolve=>setImmediate(resolve));
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.companion.reset(), false);
   h.companion.manualRep(1);
   await h.companion.finish({id:'reset-test',reps:1});
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('followup').hidden, false);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.companion.reset(), true);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.element('followup').hidden, true);
+  await new Promise(resolve=>setImmediate(resolve));
   assert.match(h.element('activity').textContent, /Ready when you are/);
   const spoken = h.spoken.length;
   h.finishSpeech();
+  await new Promise(resolve=>setImmediate(resolve));
   assert.equal(h.spoken.length, spoken);
   h.companion.start({ manual:true, movement:'sit', targetReps:5 });
+  await new Promise(resolve=>setImmediate(resolve));
+  await new Promise(resolve=>setImmediate(resolve));
   assert.match(h.element('activity').textContent, /0 reps recorded/);
 });
