@@ -49,6 +49,22 @@ export function openDatabase(databasePath = defaultPath) {
         FOREIGN KEY (report_id) REFERENCES reports(report_id),
         FOREIGN KEY (session_id) REFERENCES sessions(session_id)
       );
+
+      CREATE TABLE IF NOT EXISTS follow_ups (
+        follow_up_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        mode TEXT NOT NULL CHECK (
+          mode IN ('quiet', 'concise', 'encouraging')
+        ),
+        question TEXT NOT NULL,
+        answer TEXT,
+        created_at TEXT NOT NULL,
+        answered_at TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS follow_ups_session
+        ON follow_ups (session_id, created_at);
     `);
 
     return db;
