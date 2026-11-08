@@ -19,6 +19,10 @@ async function smoke() {
     if(['index.html','auth0-config.js','app.js'].includes(file)&&!/(no-cache|no-store|max-age=0)/.test(response.headers.get('cache-control')||''))throw new Error(`${file}: missing revalidation policy.`);
     if(file==='auth0-config.js'&&JSON.stringify(resolveConfig(body.toString()))!==JSON.stringify(expected.auth))throw new Error('Live Auth0 config differs from the build.');
   }
+  const healthResponse=await get('health');
+  if(!healthResponse.headers.get('content-type')?.includes('application/json'))throw new Error('Backend health route returned a page instead of JSON.');
+  const health=await healthResponse.json();
+  if(health.status!=='ok'||health.hosting!=='cloudflare-d1'||!health.aiConfigured)throw new Error('Hosted backend, database, or Gemini configuration is unavailable.');
   const discovery=await fetch(`https://${expected.auth.domain}/.well-known/openid-configuration`,{signal:AbortSignal.timeout(15000)});
   if(!discovery.ok)throw new Error('Auth0 discovery is unavailable.');
   const metadata=await discovery.json();

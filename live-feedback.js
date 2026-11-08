@@ -1,21 +1,38 @@
 import { apiHeaders } from './api-client.js';
+import { createLiveMicrophone } from './live-microphone.js';
 
-// One connection per exercise. Never request microphone access or store frames.
+// One connection per exercise. Microphone access is requested only on explicit opt-in.
 export function createLiveFeedback(options = {}) {
   const section = document.createElement('section');
   section.id = 'geminiLivePanel';
   section.className = 'gemini-live-panel';
   section.style.cssText='border-top:2px solid #cbd8e2;margin-top:22px;padding-top:20px;font-size:16px;line-height:1.5';
-  section.innerHTML = `<h2>Gemini live companion</h2><label><input type="checkbox" data-live-consent> Share camera snapshots with Gemini during this exercise</label><p>Optional demo feedback. Sends up to one image per second to Google while your session is active. Images are not saved by Physipeak. Feedback can be delayed or mistaken; follow your care plan.</p><button type="button" class="secondary" data-live-reconnect>Connect / reconnect Gemini</button><p data-live-status role="status">Enable before starting a camera session. Live coaching stops after three minutes.</p>`;
+  section.innerHTML = `<h2>Gemini live companion</h2><label><input type="checkbox" data-live-consent> Share camera snapshots with Gemini during this exercise</label><p>Optional demo feedback. Sends up to one image per second to Google while your session is active. Images are not saved by Physipeak. Feedback can be delayed or mistaken; follow your care plan.</p><button type="button" class="secondary" data-live-reconnect>Connect / reconnect Gemini</button><button type="button" class="secondary" data-live-mic aria-pressed="false">Enable microphone help</button><p>With microphone help on, say “Help me” or ask what to do next after Gemini finishes speaking. Your spoken question is sent to Google; audio is not saved by Physipeak.</p><p data-live-status role="status">Enable before starting a camera session. Live coaching stops after three minutes.</p>`;
   const host = document.querySelector('.session-companion');
   if (!host) throw new Error('Voice controls must be mounted before Gemini Live.');
   host.querySelector('.companion-toolbar').after(section);
   const consent = section.querySelector('input'), label = section.querySelector('[data-live-status]');
   const canvas = document.createElement('canvas');
   let socket, context, timer, deadline, generation = 0, ready = false, nextAudio = 0, nextFrame = 0, nextPrompt = 0, awaitingTurnComplete = false;
-  let latest = null, config = null, frames = 0;
+  let latest = null, config = null, frames = 0, lastProgressAt = 0;
   const sources = new Set();
+  const micButton = section.querySelector('[data-live-mic]');
+  function sendRealtime(value) { if (ready && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({realtimeInput:value})); }
+  const microphone = createLiveMicrophone({
+    allowed: () => ready && Boolean(options.getSession?.()) && !awaitingTurnComplete && sources.size === 0 && !document.hidden,
+    begin: () => { awaitingTurnComplete = true; sendRealtime({activityStart:{}}); label.textContent = 'Listening to your question…'; },
+    audio: bytes => sendRealtime({audio:{mimeType:'audio/pcm;rate=16000',data:btoa(String.fromCharCode(...bytes))}}),
+    finish: () => { if(ready) { sendRealtime({activityEnd:{}}); label.textContent = 'Gemini is considering your question…'; } },
+    state: active => { micButton.setAttribute('aria-pressed',String(active)); micButton.textContent = active ? 'Microphone help on · turn off' : 'Enable microphone help'; },
+    error: message => { label.textContent = message; }
+  });
+  micButton.onclick = () => {
+    if(microphone.active) { microphone.stop(); return; }
+    if(!ready) { label.textContent = 'Connect Gemini in an active session before enabling microphone help.'; return; }
+    void microphone.start();
+  };
   function stop(message = 'Live companion stopped.') {
+    ready = false; microphone.stop();
     generation++; ready = false; awaitingTurnComplete = false; clearInterval(timer); clearTimeout(deadline);
     socket?.close(); socket = null;
     for (const source of sources) { try { source.stop(); } catch {} } sources.clear();
@@ -40,17 +57,17 @@ export function createLiveFeedback(options = {}) {
     const video = document.getElementById('video'), now = performance.now();
     if (!video?.videoWidth || now < nextFrame || socket.bufferedAmount > 100000) return;
     nextFrame = now + 1000; frames++;
-    label.textContent = `Gemini connected · ${frames} snapshots sent · ${latest?.ready ? 'local tracking ready' : 'checking your framing'}`;
+    if (!awaitingTurnComplete && !microphone.speaking) label.textContent = `Gemini connected · ${frames} snapshots sent · ${latest?.ready ? 'local tracking ready' : 'checking your framing'}`;
     const scale = Math.min(1, 512 / Math.max(video.videoWidth, video.videoHeight));
     canvas.width = Math.round(video.videoWidth * scale); canvas.height = Math.round(video.videoHeight * scale);
     canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
     socket.send(JSON.stringify({realtimeInput:{video:{mimeType:'image/jpeg',data:canvas.toDataURL('image/jpeg', .55).split(',')[1]}}}));
     // A new clientContent turn interrupts Gemini's current generation. Wait for
     // its explicit turnComplete signal, then let any queued audio finish first.
-    if (!awaitingTurnComplete && now >= nextPrompt && nextAudio <= (context?.currentTime || 0)) {
+    if (!microphone.speaking && !microphone.pending && !awaitingTurnComplete && now >= nextPrompt && nextAudio <= (context?.currentTime || 0)) {
       nextPrompt = now + 10000;
       awaitingTurnComplete = true;
-      socket.send(JSON.stringify({clientContent:{turns:[{role:'user',parts:[{text:`${frames===1 ? 'First say: Gemini live companion connected. Then, if needed, help the user fit the selected joints into view. ' : ''}Current exercise state: ${JSON.stringify(latest)}. Review recent images for a clear visible form concern during this movement. Give one short useful cue if supported, otherwise remain silent. Do not assume a completed repetition is required.`}]}],turnComplete:true}}));
+      socket.send(JSON.stringify({clientContent:{turns:[{role:'user',parts:[{text:`${frames===1 ? 'First say: Gemini live companion connected. Then, if needed, help the user fit the selected joints into view. ' : ''}Current exercise state: ${JSON.stringify(latest)}. Seconds since the last counted repetition: ${Math.floor((now-lastProgressAt)/1000)}. If at least 15 seconds have passed without a counted rep and tracking is ready, offer one simple next-step cue supported by the visible movement and phase. Do not assume confusion, pain, or a cause for the stalled count. Review recent images for a clear visible form concern during this movement. Give one short useful cue if supported, otherwise remain silent. Do not assume a completed repetition is required.`}]}],turnComplete:true}}));
     }
   }
   consent.onchange = () => { if (!consent.checked) stop('Camera sharing disabled.'); else reconnect(); };
@@ -60,7 +77,7 @@ export function createLiveFeedback(options = {}) {
   window.addEventListener('pagehide', () => stop());
   const api = {
     async start(value) {
-      stop(); config = value; latest = null; frames = 0; nextFrame = 0; nextPrompt = 0; awaitingTurnComplete = false;
+      stop(); config = value; latest = null; frames = 0; nextFrame = 0; nextPrompt = 0; awaitingTurnComplete = false; lastProgressAt = performance.now();
       if (document.querySelector('[data-id="enabled"]')?.checked === false || !consent.checked || value.manual || value.movement === 'wave') return;
       const version = generation;
       try { context = new AudioContext(); await context.resume(); } catch { stop('Audio could not start. Press Reconnect Gemini.'); return; }
@@ -79,6 +96,7 @@ export function createLiveFeedback(options = {}) {
             if (message.error) throw Error('Gemini rejected the live session.');
             if (message.setupComplete) { ready = true; label.textContent = 'Gemini is watching your movement · camera sharing active'; timer = setInterval(tick, 250); }
             const serverContent = message.serverContent;
+            if (serverContent?.modelTurn) awaitingTurnComplete = true;
             if (serverContent?.interrupted) {
               // Gemini explicitly canceled this turn; discard only audio from
               // that canceled turn. Ordinary chunk gaps do not clear playback.
@@ -96,7 +114,7 @@ export function createLiveFeedback(options = {}) {
         deadline = setTimeout(() => stop('Three-minute live coaching allowance finished. Your local session continues.'), token.durationSeconds * 1000);
       } catch (error) { if (version === generation) stop(error.message); }
     },
-    observe(value) { latest = value; },
+    observe(value) { if (value.reps !== latest?.reps) lastProgressAt = performance.now(); latest = value; },
     stop
   };
   return api;
