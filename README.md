@@ -6,7 +6,7 @@ Formnote is a camera-assisted movement practice journal prototype for HackCamp. 
 
 - `index.html`, `app.js`, `auth0-config.js`, `_headers` — static browser app at the repository root, alongside the rest of the project. Camera processing runs in the browser; session history, calibration, plan, photos, and scanned papers are stored locally per signed-in Auth0 user.
 - `dist/` — generated deployment bundle, excluded from Git. The workflow creates it from the root app files before deploying.
-- `server/` — separate synthetic-session report service. It is not connected to the frontend and must not receive real patient records in this prototype.
+- `server/` — integrated local Express/SQLite backend. Actual non-clinical demo statistics can be shared with Gemini only after reviewing the payload and explicitly consenting. See [the connected-page guide](server/CARE-PAGES.md).
 - `shared/`, `tracking/`, `design/` — project contracts and planning notes.
 
 ## Run the frontend locally
@@ -14,10 +14,11 @@ Formnote is a camera-assisted movement practice journal prototype for HackCamp. 
 From the repository root, run:
 
 ```powershell
-py -m http.server 4173
+npm.cmd --prefix server ci
+npm.cmd --prefix server start
 ```
 
-Open <http://localhost:4173>. Camera access requires localhost or HTTPS.
+Open <http://localhost:3001>. Use Node.js 24 or newer. Keep existing server/.env private; see server/.env.example for model configuration. Local notes work without an API key. Camera access requires localhost or HTTPS.
 
 ## Sign-in (Auth0)
 
@@ -27,8 +28,9 @@ Formnote's sign-in screen offers **Continue with Google**, **Sign in with email*
 
 1. Create a free tenant at <https://auth0.com>.
 2. **Applications → Applications → Create Application**, choose **Single Page Application**, name it Formnote.
-3. Open its **Settings** tab and add both origins to **Allowed Callback URLs**, **Allowed Logout URLs** and **Allowed Web Origins**, then save:
-   - `http://localhost:4173`
+3. Open its **Settings** tab and add these origins to **Allowed Callback URLs**, **Allowed Logout URLs** and **Allowed Web Origins**, then save:
+   - `http://localhost:3001` (integrated app and backend)
+   - `http://localhost:4173` (static-only preview)
    - `https://steep-bush-dac6.smganeev.workers.dev`
 4. Copy the **Domain** (no `https://`) and **Client ID**. Both are public. Never put the Client Secret in this repository.
 
@@ -71,8 +73,8 @@ In **GitHub → Settings → Secrets and variables → Actions**, add:
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN` — a Cloudflare API token with Workers deployment permissions, scoped to this account
 
-The workflow writes the public Auth0 values into a generated root `auth0-config.js`, copies only the four static app files into `dist/`, then runs Wrangler. The Cloudflare token stays in GitHub Secrets and is never written to the repository.
+The workflow writes the public Auth0 values into a generated root `auth0-config.js`, copies only the explicitly listed frontend assets into `dist/`, then runs Wrangler. The Cloudflare token stays in GitHub Secrets and is never written to the repository.
 
 ## Prototype limits
 
-Photos and diagnosis documents stay in browser storage. Reports are generated locally and require patient review before sharing. The separate server currently accepts synthetic data only; it is not protected by Auth0 or integrated with the frontend.
+Photos and diagnosis documents stay in browser storage. Reports are generated locally and require patient review before sharing. The original fictional-demo endpoints remain synthetic-only. Separate consent-based endpoints support actual camera/manual measurements for the non-clinical hackathon demo. Browser profile scopes are not backend authentication; public or clinical deployment requires additional work.

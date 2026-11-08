@@ -116,7 +116,7 @@ test('integrated HTTP flow serves app, stores local records, and rejects real da
   const post = (path, body, headers = {}) => fetch(base + path, {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body)
   });
-  for (const path of ['/', '/styles.css', '/redesign.css', '/app.js', '/companion.js', '/session-metrics.js', '/rep-sound.js']) assert.equal((await fetch(base + path)).status, 200);
+  for (const path of ['/', '/styles.css', '/redesign.css', '/app.js', '/companion.js', '/session-metrics.js', '/rep-sound.js', '/care-pages.js', '/care-data.js']) assert.equal((await fetch(base + path)).status, 200);
   for (const path of ['/server/.env', '/.git/config', '/server/data/motion.sqlite']) assert.equal((await fetch(base + path)).status, 404);
   assert.equal((await post('/api/journal/sessions', sample(), { Origin: 'https://untrusted.invalid' })).status, 403);
   assert.equal((await post('/api/journal/sessions', sample())).status, 200);

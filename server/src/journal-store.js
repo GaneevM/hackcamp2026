@@ -31,6 +31,10 @@ export const journalSchema = z.object({
 }).strict().superRefine((data, ctx) => {
   if (data.session.manual !== (data.metrics.source === 'manual'))
     ctx.addIssue({ code: 'custom', message: 'Session and measurement sources disagree.' });
+  if (data.session.manual && ([data.session.angle,data.session.startAngle,data.session.excursion,data.metrics.minimumObservedAngleDeg,data.metrics.maximumObservedAngleDeg,data.metrics.trackingValidFraction,data.metrics.incompleteCycles,data.metrics.medianCompletionIntervalSeconds].some(value=>value!==null)||data.metrics.trackingLossEvents!==0))
+    ctx.addIssue({ code:'custom', message:'Manual logs cannot contain camera measurements.' });
+  if (data.metrics.minimumObservedAngleDeg!==null && data.metrics.maximumObservedAngleDeg!==null && data.metrics.minimumObservedAngleDeg>data.metrics.maximumObservedAngleDeg)
+    ctx.addIssue({ code:'custom', message:'Minimum observed angle cannot exceed maximum.' });
   const expected = data.session.movement === 'reach'
     ? 'hip_shoulder_elbow_angle_deg_arm_down_is_0' : 'flexion_deg_straight_is_0';
   if (data.metrics.angleConvention !== expected)
@@ -81,6 +85,13 @@ export function createJournalStore(db) {
       }
       return get(scope, id);
     },
-    clear(scope) { db.prepare('DELETE FROM journal_sessions WHERE scope = ?').run(scope); }
+    clear(scope) {
+      db.exec('BEGIN');
+      try {
+        db.prepare('DELETE FROM journal_sessions WHERE scope = ?').run(scope);
+        for (const table of ['journal_insights','journal_checkins']) if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)) db.prepare('DELETE FROM '+table+' WHERE scope=?').run(scope);
+        db.exec('COMMIT');
+      } catch(error) { db.exec('ROLLBACK'); throw error; }
+    }
   };
 }

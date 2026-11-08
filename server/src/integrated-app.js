@@ -6,8 +6,10 @@ import { createReportRouter } from './report-routes.js';
 import { createFollowUpRouter } from './follow-up-routes.js';
 import { createFollowUpAudioRouter } from './follow-up-audio-routes.js';
 import { createJournalRouter } from './journal-routes.js';
+import { createSessionInsightsRouter } from './session-insights.js';
+import { createCheckinRouter } from './checkin-store.js';
 
-export function createIntegratedApp(db, reportMode = 'mock') {
+export function createIntegratedApp(db, reportMode = 'mock', dependencies = {}) {
   if (!['mock', 'gemini'].includes(reportMode)) throw new Error('Invalid report mode.');
   const app = express();
   app.disable('x-powered-by');
@@ -23,6 +25,8 @@ export function createIntegratedApp(db, reportMode = 'mock') {
   app.get('/api/demo-session', (req, res) => {
     res.json(JSON.parse(readFileSync(new URL('../fixtures/synthetic-session.json', import.meta.url), 'utf8')));
   });
+  app.use('/api/journal/ai', createSessionInsightsRouter(db, dependencies));
+  app.use('/api/journal/checkins', createCheckinRouter(db));
   app.use('/api/journal', createJournalRouter(db));
   app.use('/api/sessions', createSessionRouter(db));
   app.use('/api/reports', createReportRouter(db, reportMode));
@@ -32,7 +36,7 @@ export function createIntegratedApp(db, reportMode = 'mock') {
   app.use('/voice-assets', express.static(fileURLToPath(new URL('../data/voice/', import.meta.url)), { dotfiles: 'deny', index: false }));
   app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url)), { dotfiles: 'deny', index: false }));
   const root = new URL('../../', import.meta.url);
-  for (const name of ['index.html', 'styles.css', 'redesign.css', 'app.js', 'auth0-config.js', 'companion.js', 'session-metrics.js', 'rep-sound.js']) {
+  for (const name of ['index.html', 'styles.css', 'redesign.css', 'app.js', 'auth0-config.js', 'companion.js', 'session-metrics.js', 'rep-sound.js', 'care-pages.js', 'care-data.js']) {
     app.get('/' + name, (req, res) => res.sendFile(fileURLToPath(new URL(name, root))));
   }
   app.get('/', (req, res) => res.sendFile(fileURLToPath(new URL('index.html', root))));

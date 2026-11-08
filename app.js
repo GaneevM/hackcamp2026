@@ -1,4 +1,5 @@
 import { createCompanion } from './companion.js';
+import { createCarePages } from './care-pages.js';
 import { WaveCounter } from './session-metrics.js';
 const waveCounter = new WaveCounter();
 const $ = (id) => document.getElementById(id);
@@ -44,7 +45,7 @@ const app = {
   sessionStartAngle: null, waveSide: null, waveSwitches: 0, lastLandmarks: null,
 };
 
-let companion = null;
+let companion = null, carePages = null;
 
 const readSessions = () => { try { return JSON.parse(localStorage.getItem(scopedStorageKey(SESSION_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(SESSION_KEY) : null) ?? '[]'); } catch { return []; } };
 const saveSessions = (rows) => localStorage.setItem(scopedStorageKey(SESSION_KEY), JSON.stringify(rows));
@@ -408,15 +409,19 @@ $('newSession').onclick = () => {
 $('saveCheckin').onclick = () => {
   if (app.confidence === null && app.pain === null && !$('note').value.trim()) { toast('Add a rating or note first.'); return; }
   const sessions = readSessions(); sessions.push({ id: crypto.randomUUID?.() || String(Date.now()), date: new Date().toISOString(), exercise: 'Check-in', reps: null, duration: 0, angle: null, movement: null, side: null, confidence: app.confidence, pain: app.pain, note: $('note').value.trim(), checkin: true });
-  saveSessions(sessions); $('checkinFeedback').textContent = 'Saved'; setTimeout(() => $('checkinFeedback').textContent = '', 2400); render(); toast('Check-in saved.');
+  saveSessions(sessions); carePages?.saveCheckin(sessions.at(-1)); clearCheckinAnswers(); $('checkinFeedback').textContent = 'Saved on this browser.'; render(); toast('Check-in saved.');
 };
+
+function clearCheckinAnswers() {
+  app.confidence = null; app.pain = null; $('note').value = '';
+  for (const id of ['confidence','pain']) $(id).querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed','false'));
+  $('confidenceVal').textContent = 'Not answered'; $('painVal').textContent = 'Not answered'; $('painNote').classList.remove('show');
+}
 
 function updateMovementUI() {
   const movement = $('exerciseSelect').value; const wave = movement === 'wave'; const cfg = activeMovement();
   document.querySelectorAll('[data-movement]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.movement === movement)));
   $('exerciseTitle').textContent = wave ? 'Camera wave demo' : cfg.title;
-  if ($('homeExercise')) $('homeExercise').textContent = wave ? 'Camera wave demo' : cfg.title;
-  if ($('homePlanCopy')) $('homePlanCopy').textContent = wave ? 'Camera demo · not saved' : movement === 'sit' ? '2 sets · 8 reps · camera optional' : 'Camera optional · follow your plan.';
   $('exerciseDesc').textContent = wave ? 'Wave to test tracking' : movement === 'sit' ? '2 sets · 8 reps · chair' : cfg.metric;
   document.querySelector('.plan-chip').textContent = wave ? 'Demo' : 'Today’s plan';
   $('planNoticeText').innerHTML = wave
@@ -615,6 +620,7 @@ function updateCue(data = reportData()) {
 }
 
 function render() {
+  carePages?.render();
   const rows = readSessions(); const movement = $('exerciseSelect').value; const side = $('bodySide').value;
   renderCalibration(); renderChart(rows); renderAnalysis(rows); updateCue(reportData()); renderPlan();
   const practice=rows.filter((row)=>!row.checkin&&!row.demo); const days=new Set(practice.filter((row)=>Date.now()-new Date(row.date).getTime()<7*864e5).map((row)=>new Date(row.date).toDateString())).size;
@@ -651,7 +657,7 @@ function buildAppScreens() {
   });
   const byName = Object.fromEntries(screens.map((screen) => [screen.dataset.screenView, screen]));
   const homeFocus = document.createElement('section'); homeFocus.className = 'home-focus card';
-  homeFocus.innerHTML = '<div><span class="home-kicker">TODAY</span><h2 id="homeExercise">Sit-to-stand</h2><p id="homePlanCopy">Camera optional · follow your plan.</p><button class="primary" type="button" data-open-screen="move">Start practice <span aria-hidden="true">→</span></button></div><div class="home-art" aria-hidden="true"><span>↗</span><i></i><b></b></div>';
+  homeFocus.innerHTML = '<div><span class="home-kicker">TODAY</span><h2 id="homeExercise">Choose your movement.</h2><p id="homePlanCopy">Camera optional · follow your plan.</p><button class="primary" type="button" data-open-screen="move">Start practice <span aria-hidden="true">→</span></button></div><div class="home-art" aria-hidden="true"><span>↗</span><i></i><b></b></div>';
   const homeLinks = document.createElement('div'); homeLinks.className = 'home-shortcuts';
   homeLinks.innerHTML = '<button class="shortcut-card" type="button" data-open-screen="checkin"><span class="shortcut-icon">♡</span><span><b>Check in</b><small>Pain · confidence · notes</small></span><span class="shortcut-arrow">→</span></button><button class="shortcut-card" type="button" data-open-screen="progress"><span class="shortcut-icon">⌁</span><span><b>Progress</b><small>Trend, photos · physio plan</small></span><span class="shortcut-arrow">→</span></button><button class="shortcut-card" type="button" data-open-screen="visit"><span class="shortcut-icon">▤</span><span><b>Visit note</b><small>Make a summary for your physio</small></span><span class="shortcut-arrow">→</span></button>';
   byName.home.append(welcome, notice, homeFocus, homeLinks);
@@ -659,7 +665,7 @@ function buildAppScreens() {
   byName.checkin.append(checkin, reflection);
   byName.progress.append(progress, recent);
   const progressTools = document.createElement('div'); progressTools.className = 'progress-tools';
-  progressTools.innerHTML = `<section class="card panel"><div class="panel-top"><div><h2>My physio plan</h2><p>Scan your paper or enter the goals your physio gave you.</p></div></div><form id="physioPlanForm" class="plan-form"><label>Diagnosis or focus<input id="planDiagnosis" maxlength="120" placeholder="Optional"></label><label>Instructions from your physio<textarea id="planInstructions" maxlength="500" placeholder="Movement, sets, reps, precautions"></textarea></label><div class="plan-grid"><label>Sessions per week<input id="planSessions" type="number" min="0" max="14" placeholder="e.g. 3"></label><label>Reps per session<input id="planReps" type="number" min="0" max="200" placeholder="e.g. 8"></label></div><button class="primary" type="submit">Save plan</button><div class="plan-summary" id="planSummary" aria-live="polite"></div><p class="fine-print">Progress is compared with the targets you enter. Follow your physio’s advice; this app does not interpret diagnoses.</p></form><div class="upload-row"><label class="secondary upload-button" for="diagnosisFile">Scan paper</label><input id="diagnosisFile" type="file" accept="application/pdf,image/*" hidden><span class="upload-hint">PDF or photo · scan runs on this device</span></div><div id="scanStatus" class="scan-status" role="status" aria-live="polite"></div><details id="scanReview" class="scan-review" hidden><summary>Review text found on paper</summary><textarea id="scanText" readonly></textarea><button type="button" id="applyScan" class="secondary">Fill plan fields from paper</button></details><div id="documentList" class="media-list"></div></section><section class="card panel"><div class="panel-top"><div><h2>Session photos</h2><p>Take optional snapshots during practice, then review them here.</p></div><span class="optional">Private</span></div><p class="fine-print">Photos are only taken when you press Capture photo. Live video is not saved.</p><div id="photoGallery" class="photo-gallery"><div class="media-empty">No session photos yet.</div></div></section>`;
+  progressTools.innerHTML = `<section class="card panel"><div class="panel-top"><div><h2>My physio plan</h2><p>Scan your paper or enter the goals your physio gave you.</p></div></div><form id="physioPlanForm" class="plan-form"><label>Diagnosis or focus<input id="planDiagnosis" maxlength="120" placeholder="Optional"></label><label>Instructions from your physio<textarea id="planInstructions" maxlength="500" placeholder="Movement, sets, reps, precautions"></textarea></label><div class="plan-grid"><label>Sessions per week<input id="planSessions" type="number" min="0" max="14" placeholder="e.g. 3"></label><label>Reps per session<input id="planReps" type="number" min="0" max="200" placeholder="e.g. 8"></label></div><button class="primary" type="submit">Save plan</button><div class="plan-summary" id="planSummary" aria-live="polite"></div><p class="fine-print">Progress is compared with the targets you enter. Follow your physio’s advice; this app does not interpret diagnoses.</p></form><div class="upload-row"><label class="secondary upload-button" for="diagnosisFile">Scan printed paper</label><input id="diagnosisFile" type="file" accept="application/pdf,image/*" hidden><span class="upload-hint">Printed text works best · handwriting may be unreadable · scan stays on this device</span></div><div id="scanStatus" class="scan-status" role="status" aria-live="polite"></div><details id="scanReview" class="scan-review" hidden><summary>Review text found on paper</summary><textarea id="scanText" readonly></textarea><button type="button" id="applyScan" class="secondary">Fill plan fields from paper</button></details><div id="documentList" class="media-list"></div></section><section class="card panel"><div class="panel-top"><div><h2>Session photos</h2><p>Take optional snapshots during practice, then review them here.</p></div><span class="optional">Private</span></div><p class="fine-print">Photos are only taken when you press Capture photo. Live video is not saved.</p><div id="photoGallery" class="photo-gallery"><div class="media-empty">No session photos yet.</div></div></section>`;
   byName.progress.append(progressTools);
   const capture = document.createElement('button'); capture.type = 'button'; capture.className = 'secondary'; capture.id = 'capturePhoto'; capture.textContent = 'Capture photo'; capture.disabled = true; capture.title = 'Start a camera session to capture a photo.';
   $('cameraRequirement').before(capture);
@@ -684,7 +690,7 @@ function buildAppScreens() {
       const active = button.dataset.screen === key; button.classList.toggle('active', active);
       button.setAttribute('aria-current', active ? 'page' : 'false');
     });
-    document.querySelector('.breadcrumb b').textContent = screens.find((screen) => screen.dataset.screenView === key)?.querySelector('h1')?.textContent || 'Home';
+    document.querySelector('.breadcrumb b').textContent = key === 'home' ? 'Home' : screens.find((screen) => screen.dataset.screenView === key)?.querySelector('h1')?.textContent || 'Home';
     history.replaceState(null, '', `#${key}`);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -736,7 +742,7 @@ function renderPlan() {
   const target = Number(plan.sessions) || 0; const reps = Number(plan.reps) || 0;
   $('planSummary').innerHTML = target ? `<b>${practiced} of ${target}</b> planned sessions in the last 7 days${reps ? ` · goal ${reps} reps/session` : ''}${plan.diagnosis ? `<br><span>${escapeHtml(plan.diagnosis)}</span>` : ''}` : 'Add the schedule from your physio to compare it with your logged sessions.';
 }
-$('physioPlanForm').onsubmit = (event) => { event.preventDefault(); localStorage.setItem(scopedStorageKey(PLAN_KEY), JSON.stringify({ diagnosis: $('planDiagnosis').value.trim(), instructions: $('planInstructions').value.trim(), sessions: $('planSessions').value, reps: $('planReps').value })); renderPlan(); toast('Physio plan saved on this device.'); };
+$('physioPlanForm').onsubmit = (event) => { event.preventDefault(); localStorage.setItem(scopedStorageKey(PLAN_KEY), JSON.stringify({ diagnosis: $('planDiagnosis').value.trim(), instructions: $('planInstructions').value.trim(), sessions: $('planSessions').value, reps: $('planReps').value })); renderPlan(); carePages?.render(); toast('Physio plan saved on this device.'); };
 function applyExtractedText(text) {
   const cleaned = String(text || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   if (!cleaned) { toast('No readable text found. Try a clearer photo or a text-based PDF.'); return; }
@@ -820,7 +826,7 @@ $('downloadReport').onclick=()=>{const data=reportData();const link=document.cre
 $('copyReport').onclick=async()=>{try{await navigator.clipboard.writeText(reportData().text);toast('Note copied.');}catch{toast('Clipboard unavailable.');}};
 $('printReport').onclick=()=>window.print();
 $('privacyOpen').onclick=()=>$('helpDialog').showModal(); $('closeHelp').onclick=()=>$('helpDialog').close();
-$('clearHistory').onclick=async()=>{if(!readSessions().length){toast('There is no saved history to clear.');return;}if(confirm('Clear local history? This cannot be undone.')){try{await companion?.clearHistory();}catch(error){toast(error.message);return;}saveSessions([]);$('metricReps').textContent='—';$('metricRange').textContent='—';$('repFoot').textContent='repetitions';$('rangeFoot').textContent='calibrate to compare';$('checkinFeedback').textContent='';render();toast('Local session history cleared.');}};
+$('clearHistory').onclick=async()=>{if(!readSessions().length){toast('There is no saved history to clear.');return;}if(confirm('Clear saved sessions, check-ins, and AI drafts in this profile? Photos and uploaded documents are kept. This cannot be undone.')){try{await companion?.clearHistory();}catch(error){toast(error.message);return;}saveSessions([]);carePages?.reset();$('metricReps').textContent='—';$('metricRange').textContent='—';$('repFoot').textContent='repetitions';$('rangeFoot').textContent='calibrate to compare';$('checkinFeedback').textContent='';render();toast('Local session history cleared.');}};
 
 window.addEventListener('resize',()=>{if(app.lastLandmarks)drawPose(app.lastLandmarks);});
 window.addEventListener('beforeunload',()=>app.stream?.getTracks().forEach((track)=>track.stop()));
@@ -899,7 +905,7 @@ async function startAuth0() {
     }
     authUser = await authClient.getUser();
     activeDataScope = `user-${encodeURIComponent(authUser.sub)}`;
-    companion?.reloadHistory();
+    clearCheckinAnswers(); companion?.reloadHistory(); carePages?.reload();
     applyAuthProfile(authUser);
     $('authAction').textContent = 'Sign out';
     $('authGate').hidden = true;
@@ -940,6 +946,8 @@ $('authAction').onclick = async () => {
 };
 companion = createCompanion({
   getScope: () => activeDataScope,
+  onSaved: () => carePages?.reload(),
+  openVisit: id => carePages?.openVisit(id),
   getRows: readSessions,
   setRows: saveSessions,
   render,
@@ -955,6 +963,8 @@ companion = createCompanion({
   },
   resetIncompleteCycle: () => { app.phase = 'ready'; app.sessionStartAngle = null; }
 });
+carePages = createCarePages({ getScope:()=>activeDataScope, getRows:readSessions, setRows:saveSessions,
+  getPlan:readPlan, getName:()=>authUser?.name || '', navigate:key=>appNavigation.switchTo(key), chooseMovement:movement=>{if(app.running||app.autoCalibration.active){toast('Finish the current session or calibration first.');return;}$('exerciseSelect').value=movement;$('exerciseSelect').dispatchEvent(new Event('change'));appNavigation.switchTo('move');}, clearCheckin:clearCheckinAnswers });
 // Pressing Back from the Auth0 page restores this page from memory with the buttons still disabled.
 window.addEventListener('pageshow', (event) => { if (event.persisted && authClient && !authUser) setAuthGateBusy(false); });
 startAuth0();
