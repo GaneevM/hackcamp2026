@@ -4,7 +4,9 @@ import { createCarePages } from './care-pages.js';
 import { WaveCounter } from './session-metrics.js';
 const waveCounter = new WaveCounter();
 import { assessPushup, PushupCounter } from './pushup.mjs';
+import { MovementCounter } from './movement-counter.mjs';
 const pushupCounter = new PushupCounter();
+const movementCounter = new MovementCounter();
 let pushupPose = null, pushupUiAt = 0;
 const $ = (id) => document.getElementById(id);
 const SESSION_KEY = 'formnote_sessions_v2';
@@ -38,6 +40,12 @@ const movements = {
     details: 'Elbow angle: shoulder–elbow–wrist. Straight = 0°.',
     keys: ['shoulder', 'elbow', 'wrist'], frame: 'Side view · show shoulder, elbow, wrist.',
     prompt: 'Turn sideways; show shoulder, elbow, wrist.',
+  },
+  crossbody: {
+    title: 'Seated cross-body shoulder stretch', metric: 'Shoulder reach across chest', view: 'front view',
+    details: 'Estimated shoulder reach across the chest. Find a comfortable range; this is not a prescribed angle.',
+    keys: ['shoulder', 'elbow', 'wrist'], frame: 'Face the camera · show both shoulders and the selected arm.',
+    prompt: 'Sit comfortably facing the camera. Keep both shoulders visible and bring one relaxed arm across your chest.',
   },
   pushup: { title:'Push-up · form demo', metric:'Elbow flexion', view:'side view', keys:['shoulder','elbow','wrist','hip','knee','ankle'], frame:'Side view · show your near-side arm, hip and legs.', prompt:'Place the camera side-on, at body height. Fit your whole body in view.' },
   wave: { title: 'Camera check · wave', metric: 'Arm landmarks', view: 'front view', keys: [], frame: 'Face camera · show shoulder, elbow, wrist.' },
@@ -109,6 +117,11 @@ function movementAngle(world, movement, side) {
   const ids = bodyPoints[side];
   if (!ids || !world) return null;
   const point = (key) => world[ids[key]];
+  if (movement === 'crossbody') {
+    const opposite = world[bodyPoints[side === 'left' ? 'right' : 'left'].shoulder];
+    const angle = angle3(opposite, point('shoulder'), point('wrist'));
+    return angle === null ? null : Math.max(0, 90 - angle);
+  }
   if (movement === 'sit') {
     const inside = angle3(point('hip'), point('knee'), point('ankle'));
     return inside === null ? null : 180 - inside;
@@ -141,12 +154,19 @@ function pointsFor(movement, landmarks) {
   }
   const cfg = movements[movement];
   const count = cfg.keys.filter((key) => visible(landmarks, key)).length;
+  if (movement === 'crossbody') {
+    const otherShoulder = bodyPoints[app.side === 'left' ? 'right' : 'left'].shoulder;
+    const seen = landmarks?.[otherShoulder] && (landmarks[otherShoulder].visibility ?? landmarks[otherShoulder].presence ?? 1) > .55;
+    const frontView = !!landmarks?.[11] && !!landmarks?.[12] && Math.abs(landmarks[11].x-landmarks[12].x)>.08;
+    return { ready: count === cfg.keys.length && !!seen && frontView, count: count + (seen ? 1 : 0), total: cfg.keys.length + 1 };
+  }
   return { ready: count === cfg.keys.length, count, total: cfg.keys.length };
 }
 
 function updateAngleText() {
   const movement = $('exerciseSelect').value;
   if (movement === 'wave') { $('angleLive').textContent = 'Arm'; return; }
+  if (movement === 'crossbody') { $('angleLive').textContent = app.currentAngle === null ? 'Across-chest reach —' : `Across-chest reach ~${app.currentAngle}°`; return; }
   $('angleLive').textContent = app.currentAngle === null ? `${activeMovement().metric} —` : `${activeMovement().metric} ~${app.currentAngle}°`;
 }
 
@@ -263,15 +283,53 @@ function drawPose(landmarks) {
   for (const point of landmarks) if ((point.visibility ?? 0) > .5) { const p = canvasPoint(point, video, stage); ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill(); ctx.strokeStyle = '#318265'; ctx.lineWidth = 2; ctx.stroke(); }
 }
 
-function countRep(angle) {
-  if (app.sessionStartAngle === null) { app.sessionStartAngle = angle; return; }
-  const calibration = getCalibration($('exerciseSelect').value, $('bodySide').value);
-  const expected = calibration ? Math.abs(calibration.endAngle - calibration.startAngle) : 55;
-  const activation = Math.max(16, expected * 0.38);
-  const delta = angle - app.sessionStartAngle;
-  if (app.phase === 'ready' && delta >= activation) app.phase = 'moved';
-  else if (app.phase === 'moved' && delta <= Math.max(7, activation * 0.28)) {
-    app.phase = 'ready'; app.reps += 1; $('repCount').textContent = String(app.reps);
+function poseAnchor(landmarks) {
+  const points = [landmarks?.[11], landmarks?.[12], landmarks?.[23], landmarks?.[24]]
+    .filter((point) => point && (point.visibility ?? point.presence ?? 1) > .55);
+  if (!points.length) return null;
+  return { x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    y: points.reduce((sum, point) => sum + point.y, 0) / points.length };
+}
+
+function isSeatedStart(landmarks) {
+  const ids=bodyPoints[app.side];
+  const shoulder=landmarks?.[ids.shoulder],hip=landmarks?.[ids.hip],knee=landmarks?.[ids.knee];
+  if (![shoulder,hip,knee].every(point=>point&&(point.visibility??point.presence??1)>.55)) return false;
+  return Math.abs(hip.y-knee.y)<.22 && shoulder.y<hip.y-.08;
+}
+
+function updateMovementCounter(landmarks, now) {
+  const movement = $('exerciseSelect').value;
+  const angle = app.currentAngle;
+  if (!Number.isFinite(angle)) { movementCounter.interrupt(); return; }
+  const rep = movementCounter.update({ movement, angle, now, position: poseAnchor(landmarks),
+    calibration: getCalibration(movement, $('bodySide').value), context: { seated: movement==='sit' ? isSeatedStart(landmarks) : undefined } });
+  if (app.sessionStartAngle === null && movementCounter.phase !== 'find-start') app.sessionStartAngle = angle;
+  app.phase = movementCounter.phase === 'find-start' ? 'ready' : movementCounter.phase === 'ready' ? 'ready' : 'moved';
+  $('trackingTitle').textContent = movementCounter.phase === 'find-start' ? 'Waiting for a steady start pose'
+    : movementCounter.phase === 'ready' ? 'Ready for the movement' : 'Movement in progress';
+  app.sessionAngles.push(angle);
+  if (rep) { app.reps = movementCounter.reps; $('repCount').textContent = String(app.reps); }
+  if (movementCounter.phase === 'find-start') {
+    $('trackingCopy').textContent = movement === 'sit'
+      ? 'Sit back in the chair and pause. Tracking will arm only from a steady seated start.'
+      : movement === 'crossbody'
+        ? 'Relax your arm at your side and pause before moving across your chest.'
+        : 'Rest in the comfortable starting position and pause before the next movement.';
+  } else if (movementCounter.phase === 'ready') {
+    $('trackingCopy').textContent = movement === 'sit'
+      ? 'Rise smoothly from the chair; the camera is looking for a full, controlled stand.'
+      : movement === 'crossbody'
+        ? 'Bring the selected arm across your chest within your comfortable range.'
+        : movement === 'reach'
+          ? 'Raise your arm smoothly within your comfortable range.'
+          : 'Bend your elbow smoothly within your comfortable range.';
+  } else {
+    $('trackingCopy').textContent = movement === 'sit'
+      ? 'Hold the standing position briefly; one controlled rise counts.'
+      : movement === 'crossbody'
+        ? `Comfortable stretch hold · ${Math.max(0,Math.floor((now-(movementCounter.targetAt??now))/1000))}s. Return when ready; stop if pain increases.`
+      : 'Hold the comfortable endpoint, then return to the starting position.';
   }
 }
 
@@ -307,10 +365,11 @@ function monitor() {
                 : 'Move your raised hand sideways, then back. No need to cross your shoulder.';
             }
           } else if (movement !== 'pushup' && app.currentAngle !== null) {
-            app.sessionAngles.push(app.currentAngle); countRep(app.currentAngle);
+            updateMovementCounter(landmarks, performance.now());
           }
         }
-      } else { if($('exerciseSelect').value==='pushup'){pushupCounter.pause();showPushupWaiting('Step into view.');} app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
+        else if (app.running && !app.manual && $('exerciseSelect').value !== 'pushup' && $('exerciseSelect').value !== 'wave') movementCounter.interrupt();
+      } else { if($('exerciseSelect').value==='pushup'){pushupCounter.pause();showPushupWaiting('Step into view.');} if($('exerciseSelect').value!=='pushup'&&$('exerciseSelect').value!=='wave')movementCounter.interrupt(); app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
       if (app.running && !app.manual) companion?.observe({ ready: app.poseReady, angle: app.currentAngle, reps: app.reps, phase: app.phase });
     } catch (error) { console.warn('Pose estimate skipped', error); }
   }
@@ -384,7 +443,7 @@ function startCountdown() {
 }
 
 function beginSession(manual = false) {
-  pushupCounter.reset(); pushupPose=null;
+  pushupCounter.reset(); movementCounter.reset(); pushupPose=null;
   $('newSession').hidden = true;
   if (app.pain >= 7) { $('painNote').classList.add('show'); toast('Your pain check-in is noted. Follow your care team’s guidance before deciding whether to exercise.'); }
   app.manual = manual; app.reps = 0; app.phase = 'ready'; app.sessionStartAngle = null; app.sessionAngles = []; app.waveSide = null; app.waveSwitches = 0; app.startedAt = Date.now(); app.activeSessionId = crypto.randomUUID?.() || String(Date.now());
@@ -434,6 +493,7 @@ function endSession() {
     reps: app.reps, duration, angle: highestAngle, startAngle,
     excursion: highestAngle !== null && startAngle !== null ? Math.max(0, highestAngle - startAngle) : null,
     confidence: app.confidence, pain: app.pain, note: $('note').value.trim(), manual: app.manual, checkin: false,
+    ...($('exerciseSelect').value==='crossbody'?{averageHoldSeconds:movementCounter.holds.length?Math.round(movementCounter.holds.reduce((sum,seconds)=>sum+seconds,0)/movementCounter.holds.length*10)/10:null}:{}),
     ...($('exerciseSelect').value==='pushup'?{variant:pushupVariant(),form:app.manual?null:{version:1,reps:pushupCounter.reps,average:pushupCounter.reps.length?Math.round(pushupCounter.reps.reduce((n,r)=>n+r.score,0)/pushupCounter.reps.length):null}}:{}),
   };
   if($('pushupVariant')) $('pushupVariant').disabled=false;
@@ -482,6 +542,7 @@ function clearCheckinAnswers() {
 
 function updateMovementUI() {
   const movement = $('exerciseSelect').value; const wave = movement === 'wave'; const cfg = activeMovement();
+  movementCounter.reset();
   if($('pushupCoach')){$('pushupCoach').hidden=movement!=='pushup';pushupCounter.reset();pushupPose=null;}
   document.querySelectorAll('[data-movement]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.movement === movement)));
   $('exerciseTitle').textContent = wave ? 'Camera wave demo' : cfg.title;
@@ -502,20 +563,21 @@ function updateMovementUI() {
   $('chartSubtitle').textContent = wave ? 'Demo not tracked' : `${cfg.metric} · ${$('bodySide').value} · degrees`;
   $('trackingTitle').textContent = 'Camera setup';
   const tips = document.querySelectorAll('.setup-tip');
-  const tipWords = wave ? [['Face the camera','Show your arm'],['Raise and wave','Keep shoulder, elbow, wrist visible'],['Watch the overlay','Move hand side-to-side']] : [['Step back','Keep the tracked joints in frame'],['Turn to the side','Use a consistent view'],['Use steady light','Avoid a bright window behind you']];
+  const tipWords = wave ? [['Face the camera','Show your arm'],['Raise and wave','Keep shoulder, elbow, wrist visible'],['Watch the overlay','Move hand side-to-side']] : movement==='crossbody' ? [['Face camera','Show both shoulders'],['Select a side','Keep the arm in frame'],['Stay comfortable','Move across the chest gently']] : [['Step back','Keep the tracked joints in frame'],['Turn to the side','Use a consistent view'],['Use steady light','Avoid a bright window behind you']];
   tips.forEach((tip, index) => { tip.querySelector('b').textContent = tipWords[index][0]; tip.querySelector('span').textContent = tipWords[index][1]; });
   app.poseReady = false; app.currentAngle = null; app.angleSamples = []; updateAngleText();
   if (app.stream && app.landmarker && !app.running) { const result = app.landmarker.detectForVideo($('video'), performance.now()); readPose(result.landmarks?.[0], result.worldLandmarks?.[0]); }
   render();
 }
 $('exerciseSelect').addEventListener('change', updateMovementUI);
-$('bodySide').addEventListener('change', () => { app.side = $('bodySide').value; app.poseReady = false; app.currentAngle = null; updateAngleText(); render(); });
+$('bodySide').addEventListener('change', () => { app.side = $('bodySide').value; movementCounter.reset(); app.poseReady = false; app.currentAngle = null; updateAngleText(); render(); });
 
 const autoPoseCopy = {
   pushup: ['Use your chosen push-up variation. Hold your comfortable starting position with arms extended, without locking them.', 'Bend your elbows only to your comfortable depth. Hold briefly; do not push into pain.'],
   sit: ['Sit upright on your chair with feet flat, in the position you usually start from.', 'Stand or sit back down slowly to a comfortable endpoint, following your physio’s plan.'],
   reach: ['Stand or sit comfortably with your arm relaxed by your side.', 'Raise your arm only to a comfortable endpoint; keep your trunk relaxed.'],
   elbow: ['Keep your upper arm relaxed by your side and begin with your elbow comfortable.', 'Bend your elbow to a comfortable endpoint without forcing it.'],
+  crossbody: ['Sit comfortably facing the camera with your selected arm relaxed by your side.', 'Bring that arm across your chest only as far as is comfortable. Keep your shoulders relaxed.'],
 };
 function updateAutoCalibrationView() {
   const state=app.autoCalibration; const index=state.stage==='end'?1:0; const copy=autoPoseCopy[$('exerciseSelect').value] || autoPoseCopy.sit;
@@ -528,7 +590,11 @@ function updateAutoCalibrationView() {
 function beginAutoPoseCapture(stage) {
   const state=app.autoCalibration; state.stage=stage; state.samples=[]; state.phaseAt=null; state.lastSampleAt=0;
   updateAutoCalibrationView();
-  $('autoCalStatus').textContent=stage==='start'?'Stand in your usual starting pose. When the required joints are visible, hold comfortably for 3 seconds.':'Move to your comfortable endpoint. When the required joints are visible, hold comfortably for 3 seconds.';
+  const movement=$('exerciseSelect').value;
+  const prompt=movement==='sit'?(stage==='start'?'Sit on your chair with feet supported.':'Stand from the chair, only as comfortably as you can.')
+    :movement==='crossbody'?(stage==='start'?'Sit comfortably and relax your selected arm by your side.':'Bring the selected arm across your chest to a comfortable stretch.')
+      :(stage==='start'?'Settle into your comfortable starting position.':'Move to a comfortable endpoint without forcing it.');
+  $('autoCalStatus').textContent=`${prompt} Hold steadily for 3 seconds.`;
 }
 function collectAutoCalibration() {
   const state=app.autoCalibration; if (!state.active || !['start','end'].includes(state.stage)) return;
@@ -595,10 +661,10 @@ $('saveCalibration').onclick = () => {
   const startAngle = Number($('calStart').value); const endAngle = Number($('calEnd').value);
   const targetAngle = $('calTarget').value === '' ? null : Number($('calTarget').value);
   if (!Number.isFinite(startAngle) || !Number.isFinite(endAngle) || startAngle < 0 || startAngle > 180 || endAngle < 0 || endAngle > 180) { $('captureStatus').textContent = 'Enter both angles from 0° to 180°.'; return; }
-  if (endAngle <= startAngle) { $('captureStatus').textContent = 'End range must be above the starting angle.'; return; }
+  if (Math.abs(endAngle-startAngle) < 10) { $('captureStatus').textContent = 'Capture a comfortable range at least 10° apart.'; return; }
   if (targetAngle !== null && (!Number.isFinite(targetAngle) || targetAngle < 0 || targetAngle > 180)) { $('captureStatus').textContent = 'Goal must be 0° to 180°, or blank.'; return; }
   const values = readCalibrations();
-  values[calibrationKey()] = { movement: $('exerciseSelect').value, metric: activeMovement().metric, side: $('bodySide').value, startAngle, endAngle, targetAngle, source: app.poseReady ? 'camera estimate and user-entered target' : 'manual entry', savedAt: new Date().toISOString() };
+  values[calibrationKey()] = { movement: $('exerciseSelect').value, metric: activeMovement().metric, side: $('bodySide').value, startAngle: Math.min(startAngle,endAngle), endAngle: Math.max(startAngle,endAngle), targetAngle, source: app.poseReady ? 'camera estimate and user-entered target' : 'manual entry', savedAt: new Date().toISOString() };
   saveCalibrations(values); $('calibrationDialog').close(); render(); toast('Calibration saved.');
 };
 
@@ -676,7 +742,7 @@ function reportData() {
   const first = scoped[0]; const latest = scoped.at(-1); const recent = scoped.slice(-3); const avg = recent.length ? Math.round(recent.reduce((sum,row)=>sum+row.angle,0)/recent.length) : null;
   const checkins=rows.filter((row)=>row.confidence!==null||row.pain!==null).sort((a,b)=>new Date(a.date)-new Date(b.date));
   const latestCheckin=[...checkins].reverse()[0]; const notes=rows.filter((row)=>row.note).slice(-5).map((row)=>row.note);
-  const measured=scoped.slice(-5).map((row)=>`${new Date(row.date).toLocaleDateString()} · ~${escapeHtml(row.angle)}° · ${row.reps} reps${pushupFormText(row)}`).join('\n') || 'No camera sessions yet.';
+  const measured=scoped.slice(-5).map((row)=>`${new Date(row.date).toLocaleDateString()} · ~${escapeHtml(row.angle)}° · ${row.reps} reps${Number.isFinite(row.averageHoldSeconds)?` · ${row.averageHoldSeconds}s average stretch hold`:''}${pushupFormText(row)}`).join('\n') || 'No camera sessions yet.';
   const angleText=latest?`${activeMovement().metric} (${side}): baseline ${cal?.endAngle??first.angle}° · recent avg ${avg}° · latest ${latest.angle}°${cal?.targetAngle!==null&&cal?.targetAngle!==undefined?` · physio goal ${cal.targetAngle}°`:''}`:'No angle sessions yet.';
   const painText=latestCheckin?`Confidence ${latestCheckin.confidence??'—'}/5 · pain ${latestCheckin.pain??'—'}/10`:'No check-in yet.';
   const text=`FORMNOTE · VISIT PREP\n${new Date().toLocaleDateString()} · Jamie Parker\n\nMOVEMENT\n${angleText}\n${measured}\n\nCHECK-IN\n${painText}\n\nNOTES\n${notes.length?notes.map((note)=>`• ${note}`).join('\n'):'None yet.'}\n\nASK MY PHYSIO\n• Is this camera angle useful for my plan?\n• Is my goal still right for me?\n• What should I do if pain changes?\n\nCamera angles are estimates. Review before sharing.`;
@@ -699,7 +765,7 @@ function render() {
   const practice=rows.filter((row)=>!row.checkin&&!row.demo); const days=new Set(practice.filter((row)=>Date.now()-new Date(row.date).getTime()<7*864e5).map((row)=>new Date(row.date).toDateString())).size;
   $('metricStreak').textContent=String(days); const list=$('sessionList');
   if (!rows.length) { list.innerHTML='<div class="empty-sessions">No sessions yet.</div>'; $('reportStatus').textContent='No sessions yet.'; return; }
-  list.innerHTML=rows.slice(-5).reverse().map((row)=>`<div class="session-row"><div class="session-date"><strong>${new Date(row.date).getDate()}</strong>${new Date(row.date).toLocaleDateString(undefined,{month:'short'})}</div><div class="session-main"><b>${row.checkin?'Check-in':escapeHtml(row.exercise)}</b><span>${row.checkin?'Personal check-in saved':`${row.reps??0} reps · ${row.manual?'manual log':'camera session'}${row.angle!==null?` · ~${row.angle}° ${escapeHtml(row.metric)}`:''}${pushupFormText(row)}`}</span></div><span class="session-pain">${row.pain===null?'Pain —':`Pain ${row.pain}/10`}</span></div>`).join('');
+  list.innerHTML=rows.slice(-5).reverse().map((row)=>`<div class="session-row"><div class="session-date"><strong>${new Date(row.date).getDate()}</strong>${new Date(row.date).toLocaleDateString(undefined,{month:'short'})}</div><div class="session-main"><b>${row.checkin?'Check-in':escapeHtml(row.exercise)}</b><span>${row.checkin?'Personal check-in saved':`${row.reps??0} reps · ${row.manual?'manual log':'camera session'}${row.angle!==null?` · ~${row.angle}° ${escapeHtml(row.metric)}`:''}${Number.isFinite(row.averageHoldSeconds)?` · ${row.averageHoldSeconds}s average hold`:''}${pushupFormText(row)}`}</span></div><span class="session-pain">${row.pain===null?'Pain —':`Pain ${row.pain}/10`}</span></div>`).join('');
   const num=practice.length; $('reportStatus').textContent=`${num} sessions · ${rows.filter((row)=>row.checkin||row.confidence!==null||row.pain!==null).length} check-ins`;
 }
 
