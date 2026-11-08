@@ -61,7 +61,7 @@ export function createReportRouter(db, reportMode) {
         summary:
           `Across ${data.sessions.length} synthetic session(s), ` +
           `${completedReps} completed repetitions were recorded.`,
-        observations: context.map(
+        observations: context.slice(0, 10).map(
           (item) =>
             `For session ${item.sessionId}, the user reported: ` +
             JSON.stringify(item.answer)

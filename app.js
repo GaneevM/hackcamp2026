@@ -1,3 +1,6 @@
+import { createCompanion } from './companion.js';
+import { WaveCounter } from './session-metrics.js';
+const waveCounter = new WaveCounter();
 const $ = (id) => document.getElementById(id);
 const SESSION_KEY = 'formnote_sessions_v2';
 const CALIBRATION_KEY = 'formnote_angle_calibration_v1';
@@ -41,6 +44,8 @@ const app = {
   sessionStartAngle: null, waveSide: null, waveSwitches: 0, lastLandmarks: null,
 };
 
+let companion = null;
+
 const readSessions = () => { try { return JSON.parse(localStorage.getItem(scopedStorageKey(SESSION_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(SESSION_KEY) : null) ?? '[]'); } catch { return []; } };
 const saveSessions = (rows) => localStorage.setItem(scopedStorageKey(SESSION_KEY), JSON.stringify(rows));
 const readCalibrations = () => { try { return JSON.parse(localStorage.getItem(scopedStorageKey(CALIBRATION_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(CALIBRATION_KEY) : null) ?? '{}'); } catch { return {}; } };
@@ -83,7 +88,7 @@ setRating('confidence', 'confidence', 'confidenceVal', (value) => `${value} / 5`
 setRating('pain', 'pain', 'painVal', (value) => `${value} / 10`);
 
 function angle3(a, b, c) {
-  if (!a || !b || !c) return null;
+  if (!a || !b || !c || ![a,b,c].every(p => [p.x,p.y,p.z].every(Number.isFinite))) return null;
   const u = [a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0)];
   const v = [c.x - b.x, c.y - b.y, (c.z || 0) - (b.z || 0)];
   const denominator = Math.hypot(...u) * Math.hypot(...v);
@@ -143,30 +148,38 @@ function readPose(landmarks, world) {
   const visibility = pointsFor(movement, landmarks);
   app.poseReady = visibility.ready;
   if (movement === 'wave') {
-    $('startBtn').disabled = !visibility.ready || app.running;
-    $('trackingTitle').textContent = visibility.ready ? 'Arm in view' : 'Show one arm';
-    $('trackingCopy').textContent = visibility.ready ? 'Raise hand and wave.' : movements.wave.frame;
-    cameraState(visibility.ready ? 'Ready' : 'Adjust view', visibility.ready ? 'good' : 'bad', visibility.ready ? 'Shoulder, elbow, wrist visible.' : movements.wave.frame, `${visibility.count}/${visibility.total} joints`);
+    $('startBtn').disabled = app.running;
+    $('trackingTitle').textContent = app.running ? 'Session active · camera check' : 'Camera check ready — press Start demo';
+    $('trackingCopy').textContent = visibility.ready ? 'Raise one hand and wave out and back. Your hand can stay on one side of your body.' : 'Show a shoulder, elbow, and wrist. Counting waits until they are visible.';
+    cameraState(app.running ? (visibility.ready ? 'Session active' : 'Active · waiting for view') : 'Not started', visibility.ready ? 'good' : 'bad', visibility.ready ? 'One out-and-back hand movement = one demo cycle.' : movements.wave.frame, `${visibility.count}/${visibility.total} joints`);
     updateAngleText();
     return visibility.ready;
   }
   if (!visibility.ready) {
-    app.currentAngle = null; app.angleSamples = []; updateAngleText(); $('startBtn').disabled = true;
-    $('trackingTitle').textContent = 'Adjust your camera view'; $('trackingCopy').textContent = activeMovement().frame;
-    cameraState('Adjust view', 'bad', activeMovement().frame, `${visibility.count}/${visibility.total} joints`);
+    app.currentAngle = null; app.angleSamples = []; updateAngleText(); $('startBtn').disabled = app.running;
+    $('trackingTitle').textContent = app.running ? 'Session active · waiting for joints' : 'Camera ready — start, then step into view'; $('trackingCopy').textContent = activeMovement().frame;
+    cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', activeMovement().frame, `${visibility.count}/${visibility.total} joints`);
     return false;
   }
-  const raw = movementAngle(world || landmarks, movement, app.side);
+  const raw = movementAngle(world, movement, app.side);
   if (raw !== null && Number.isFinite(raw)) {
     app.angleSamples.push(raw); if (app.angleSamples.length > 9) app.angleSamples.shift();
     app.currentAngle = Math.round(median(app.angleSamples));
   }
+  if (raw === null || !Number.isFinite(raw)) {
+    app.poseReady = false; app.currentAngle = null; app.angleSamples = [];
+    $('startBtn').disabled = app.running; updateAngleText();
+    $('trackingTitle').textContent = app.running ? 'Session active · waiting for angle' : 'Camera ready — waiting for angle';
+    $('trackingCopy').textContent = 'No usable 3D angle yet. Reposition the selected joints; counting is paused.';
+    cameraState(app.running ? 'Active · angle unavailable' : 'Not started', 'bad', activeMovement().frame);
+    return false;
+  }
   collectAutoCalibration();
   updateAngleText();
-  $('trackingTitle').textContent = 'Ready';
+  $('trackingTitle').textContent = app.running ? 'Session active · counting' : 'Ready — press Start session';
   $('trackingCopy').textContent = 'Move comfortably. Follow your plan.';
   $('startBtn').disabled = app.running;
-  cameraState(app.running ? 'Tracking' : 'Ready', app.running ? 'active' : 'good', 'Camera angle is an estimate.', `${visibility.count}/${visibility.total} joints`);
+  cameraState(app.running ? 'Session active' : 'Ready · not started', app.running ? 'active' : 'good', 'Camera angle is an estimate.', `${visibility.count}/${visibility.total} joints`);
   return true;
 }
 
@@ -258,17 +271,30 @@ function monitor() {
           const movement = $('exerciseSelect').value;
           if (movement === 'wave') {
             const arms = [['left', 11, 15], ['right', 12, 16]];
-            const arm = arms.find(([side]) => ['shoulder','elbow','wrist'].every((key) => visible(landmarks, key, side)));
+            const available = arms.filter(([side]) => ['shoulder','elbow','wrist'].every(key => visible(landmarks, key, side)));
+            const raised = ([, shoulder, wrist]) => landmarks[wrist].y < landmarks[shoulder].y + .12;
+            const arm = available.find(candidate => candidate[0] === waveCounter.arm && raised(candidate))
+              || available.find(raised) || available[0];
             if (arm) {
-              const [, shoulder, wrist] = arm; const raised = landmarks[wrist].y < landmarks[shoulder].y + .08; const dx = landmarks[wrist].x - landmarks[shoulder].x;
-              if (raised && Math.abs(dx) > .11) { const side = Math.sign(dx); if (app.waveSide !== null && side !== app.waveSide) { app.waveSwitches += 1; if (app.waveSwitches % 2 === 0) { app.reps += 1; $('repCount').textContent = String(app.reps); } } app.waveSide = side; }
-              else if (!raised) app.waveSide = null;
+              const [side, shoulder, wrist] = arm;
+              const shoulderWidth = landmarks[11] && landmarks[12]
+                ? Math.hypot(landmarks[11].x - landmarks[12].x, landmarks[11].y - landmarks[12].y) : .2;
+              const counted = waveCounter.update({
+                arm: side, raised: raised(arm),
+                position: landmarks[wrist].x - landmarks[shoulder].x,
+                threshold: Math.max(.035, Math.min(.09, shoulderWidth * .25))
+              }, performance.now());
+              if (counted) { app.reps++; $('repCount').textContent = String(app.reps); }
+              $('trackingCopy').textContent = !raised(arm) ? 'Raise one hand near shoulder height to begin the wave check.'
+                : waveCounter.phase === 'moved' ? 'Bring your hand back toward where the wave started.'
+                : 'Move your raised hand sideways, then back. No need to cross your shoulder.';
             }
           } else if (app.currentAngle !== null) {
             app.sessionAngles.push(app.currentAngle); countRep(app.currentAngle);
           }
         }
-      } else { app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = true; cameraState('No body detected', 'bad', 'Move into view and show the joints.', '0 joints'); }
+      } else { app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
+      if (app.running && !app.manual) companion?.observe({ ready: app.poseReady, angle: app.currentAngle, reps: app.reps, phase: app.phase });
     } catch (error) { console.warn('Pose estimate skipped', error); }
   }
   app.raf = requestAnimationFrame(monitor);
@@ -279,7 +305,7 @@ function setActive(active) {
   const captureButton = $('capturePhoto'); if (captureButton) captureButton.disabled = !active || app.manual || $('exerciseSelect').value === 'wave';
   const isWave = $('exerciseSelect').value === 'wave';
   $('startBtn').textContent = active ? 'In progress' : isWave ? 'Start demo' : 'Start session';
-  $('startBtn').disabled = active || (!app.manual && (!app.stream || !app.landmarker || !app.poseReady));
+  $('startBtn').disabled = active || (!app.manual && (!app.stream || !app.landmarker));
   if (active) {
     $('trackingTitle').textContent = app.manual ? 'Manual logging' : isWave ? 'Wave demo' : 'Tracking';
     $('trackingCopy').textContent = app.manual ? 'Add reps below.' : isWave ? 'Raise hand and wave.' : `${activeMovement().metric} estimate · move comfortably.`;
@@ -290,6 +316,7 @@ function setActive(active) {
 function beginSession(manual = false) {
   if (app.pain >= 7) { $('painNote').classList.add('show'); toast('Your pain check-in is noted. Follow your care team’s guidance before deciding whether to exercise.'); }
   app.manual = manual; app.reps = 0; app.phase = 'ready'; app.sessionStartAngle = null; app.sessionAngles = []; app.waveSide = null; app.waveSwitches = 0; app.startedAt = Date.now(); app.activeSessionId = crypto.randomUUID?.() || String(Date.now());
+  waveCounter.reset();
   $('repCount').textContent = '0';
   if (manual) {
     $('cameraEmpty').style.display = 'grid'; $('video').style.display = 'none'; app.stream?.getTracks().forEach((track) => track.stop()); app.stream = null;
@@ -297,13 +324,17 @@ function beginSession(manual = false) {
     $('trackingTitle').textContent = 'Manual logging'; $('trackingCopy').textContent = 'Add reps below.';
     cameraState('Manual', 'good', 'Camera off · add reps below.', 'Manual');
   } else $('manualCounter').style.display = 'none';
+  $('exerciseSelect').disabled = true; $('bodySide').disabled = true;
+  const plannedReps = Number(readPlan().reps);
+  companion?.start({ manual, movement: $('exerciseSelect').value,
+    targetReps: Number.isInteger(plannedReps) && plannedReps > 0 && plannedReps <= 200 ? plannedReps : null });
   setActive(true); toast($('exerciseSelect').value === 'wave' ? 'Wave to test tracking.' : 'Session started. Follow your plan.');
 }
 
 $('startBtn').onclick = () => {
   if (!app.stream || !app.landmarker) { toast('Set up camera or log manually.'); return; }
-  if (!app.poseReady) { toast('Move into view until joints are visible.'); return; }
   beginSession(false);
+  if (!app.poseReady) toast('Session started. Step into view; counting waits for the selected joints.');
 };
 $('manualBtn').onclick = () => { if (app.running) { toast('Finish the current session first.'); return; } beginSession(true); };
 
@@ -311,8 +342,8 @@ const manualCounter = document.createElement('div'); manualCounter.id = 'manualC
 manualCounter.style.cssText = 'display:none;justify-content:center;align-items:center;gap:10px;padding:0 16px 15px';
 manualCounter.innerHTML = '<button type="button" class="secondary" id="manualMinus" aria-label="Remove one repetition">−</button><span style="font-size:10px;color:var(--muted)">Manual reps</span><button type="button" class="secondary" id="manualPlus" aria-label="Add one repetition">+ Add rep</button>';
 document.querySelector('#movement').append(manualCounter);
-$('manualMinus').onclick = () => { app.reps = Math.max(0, app.reps - 1); $('repCount').textContent = String(app.reps); };
-$('manualPlus').onclick = () => { app.reps += 1; $('repCount').textContent = String(app.reps); };
+$('manualMinus').onclick = () => { app.reps = Math.max(0, app.reps - 1); $('repCount').textContent = String(app.reps); companion?.manualRep(app.reps, false); };
+$('manualPlus').onclick = () => { app.reps += 1; $('repCount').textContent = String(app.reps); companion?.manualRep(app.reps); };
 
 function endSession() {
   if (!app.running) return;
@@ -327,9 +358,10 @@ function endSession() {
     excursion: highestAngle !== null && startAngle !== null ? Math.max(0, highestAngle - startAngle) : null,
     confidence: app.confidence, pain: app.pain, note: $('note').value.trim(), manual: app.manual, checkin: false,
   };
-  app.running = false; $('manualCounter').style.display = 'none'; $('repBadge').classList.remove('show'); $('stageStop').classList.remove('show');
+  companion?.finish(row);
+  app.running = false; $('exerciseSelect').disabled = false; $('bodySide').disabled = demo; $('manualCounter').style.display = 'none'; $('repBadge').classList.remove('show'); $('stageStop').classList.remove('show');
   $('startBtn').textContent = demo ? 'Start camera check' : 'Start camera session';
-  $('startBtn').disabled = !app.stream || !app.landmarker || !app.poseReady;
+  $('startBtn').disabled = !app.stream || !app.landmarker;
   if (demo) { app.manual = false; app.activeSessionId = null; toast(`Wave demo done · ${row.reps} cycles.`); return; }
   const sessions = readSessions(); sessions.push(row); saveSessions(sessions); app.manual = false; app.activeSessionId = null;
   if (row.angle !== null) { $('metricRange').textContent = `${row.angle}°`; $('rangeFoot').textContent = `${row.metric} · estimated peak`; }
@@ -754,7 +786,7 @@ $('downloadReport').onclick=()=>{const data=reportData();const link=document.cre
 $('copyReport').onclick=async()=>{try{await navigator.clipboard.writeText(reportData().text);toast('Note copied.');}catch{toast('Clipboard unavailable.');}};
 $('printReport').onclick=()=>window.print();
 $('privacyOpen').onclick=()=>$('helpDialog').showModal(); $('closeHelp').onclick=()=>$('helpDialog').close();
-$('clearHistory').onclick=()=>{if(!readSessions().length){toast('There is no saved history to clear.');return;}if(confirm('Clear local history? This cannot be undone.')){saveSessions([]);$('metricReps').textContent='—';$('metricRange').textContent='—';$('repFoot').textContent='repetitions';$('rangeFoot').textContent='calibrate to compare';$('checkinFeedback').textContent='';render();toast('Local session history cleared.');}};
+$('clearHistory').onclick=async()=>{if(!readSessions().length){toast('There is no saved history to clear.');return;}if(confirm('Clear local history? This cannot be undone.')){try{await companion?.clearHistory();}catch(error){toast(error.message);return;}saveSessions([]);$('metricReps').textContent='—';$('metricRange').textContent='—';$('repFoot').textContent='repetitions';$('rangeFoot').textContent='calibrate to compare';$('checkinFeedback').textContent='';render();toast('Local session history cleared.');}};
 
 window.addEventListener('resize',()=>{if(app.lastLandmarks)drawPose(app.lastLandmarks);});
 window.addEventListener('beforeunload',()=>app.stream?.getTracks().forEach((track)=>track.stop()));
@@ -793,6 +825,7 @@ async function startAuth0() {
     }
     authUser = await authClient.getUser();
     activeDataScope = `user-${encodeURIComponent(authUser.sub)}`;
+    companion?.reloadHistory();
     applyAuthProfile(authUser);
     $('authAction').textContent = 'Sign out';
     $('authGate').hidden = true;
@@ -821,4 +854,13 @@ $('authAction').onclick = async () => {
   if (authUser) await authClient.logout({ logoutParams: { returnTo: window.location.origin } });
   else await signInWithAuth0();
 };
+companion = createCompanion({
+  getScope: () => activeDataScope,
+  getRows: readSessions,
+  setRows: saveSessions,
+  render,
+  getPhase: () => app.phase,
+  getMovement: () => $('exerciseSelect').value,
+  resetIncompleteCycle: () => { app.phase = 'ready'; app.sessionStartAngle = null; }
+});
 startAuth0();
