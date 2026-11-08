@@ -4,7 +4,8 @@ Formnote is a camera-assisted movement practice journal prototype for HackCamp. 
 
 ## Repository
 
-- `frontend/` — static browser app. Camera processing runs in the browser; session history, calibration, plan, photos, and scanned papers are stored locally per signed-in Auth0 user.
+- `index.html`, `app.js`, `auth0-config.js`, `_headers` — static browser app at the repository root, alongside the rest of the project. Camera processing runs in the browser; session history, calibration, plan, photos, and scanned papers are stored locally per signed-in Auth0 user.
+- `dist/` — generated deployment bundle, excluded from Git. The workflow creates it from the root app files before deploying.
 - `server/` — separate synthetic-session report service. It is not connected to the frontend and must not receive real patient records in this prototype.
 - `shared/`, `tracking/`, `design/` — project contracts and planning notes.
 
@@ -13,7 +14,7 @@ Formnote is a camera-assisted movement practice journal prototype for HackCamp. 
 From the repository root, run:
 
 ```powershell
-py -m http.server 4173 --directory frontend
+py -m http.server 4173
 ```
 
 Open <http://localhost:4173>. Camera access requires localhost or HTTPS.
@@ -25,13 +26,13 @@ Create an Auth0 **Single Page Application**. Add these origins to **Allowed Call
 - `http://localhost:4173`
 - `https://steep-bush-dac6.smganeev.workers.dev`
 
-For local manual runs, put the Auth0 tenant domain (without `https://`) and Client ID in `frontend/auth0-config.js`. They are public SPA settings. Never put a Client Secret in browser code or this repository.
+For local manual runs, put the Auth0 tenant domain (without `https://`) and Client ID in `auth0-config.js`. They are public SPA settings. Never put a Client Secret in browser code or this repository.
 
 The app keeps camera images and health notes on this browser. Auth0 login does not sync data to another device or a physiotherapist. Camera angles are estimates and are not a diagnosis or treatment recommendation.
 
 ## Deploy to the existing Cloudflare Worker
 
-`wrangler.jsonc` publishes `frontend/` to the existing Worker `steep-bush-dac6`. The GitHub Actions workflow deploys on changes to `main` and can also be started manually. It skips deployment with a notice until the Auth0 variables and Cloudflare secrets below have been added.
+`wrangler.jsonc` publishes the generated `dist/` bundle to the existing Worker `steep-bush-dac6`. The GitHub Actions workflow deploys on changes to the root app files in `main` and can also be started manually. It skips deployment with a notice until the Cloudflare secrets below have been added. Auth0 is optional.
 
 In **GitHub → Settings → Secrets and variables → Actions**, add:
 
@@ -45,7 +46,7 @@ In **GitHub → Settings → Secrets and variables → Actions**, add:
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN` — a Cloudflare API token with Workers deployment permissions, scoped to this account
 
-The workflow writes the public Auth0 values into a generated `frontend/auth0-config.js` for that deployment, then runs Wrangler. The Cloudflare token stays in GitHub Secrets and is never written to the repository.
+The workflow writes the public Auth0 values into a generated root `auth0-config.js`, copies only the four static app files into `dist/`, then runs Wrangler. The Cloudflare token stays in GitHub Secrets and is never written to the repository.
 
 ## Prototype limits
 

@@ -5,7 +5,10 @@ on:
     branches:
       - main
     paths:
-      - "frontend/**"
+      - "index.html"
+      - "app.js"
+      - "auth0-config.js"
+      - "_headers"
       - "wrangler.jsonc"
       - ".github/workflows/deploy-cloudflare.yml"
   workflow_dispatch:
@@ -42,7 +45,12 @@ jobs:
           const config = { domain, clientId };
           const contents = `window.FORMNOTE_AUTH0_CONFIG = ${JSON.stringify(config)};\n` +
             `if (window.FORMNOTE_AUTH0_CONFIG.domain && window.FORMNOTE_AUTH0_CONFIG.clientId) { document.documentElement.classList.add('auth-enabled'); }\n`;
-          fs.writeFileSync('frontend/auth0-config.js', contents);
+          fs.writeFileSync('auth0-config.js', contents);
+          fs.rmSync('dist', { recursive: true, force: true });
+          fs.mkdirSync('dist', { recursive: true });
+          for (const file of ['index.html', 'app.js', 'auth0-config.js', '_headers']) {
+            fs.copyFileSync(file, `dist/${file}`);
+          }
           fs.appendFileSync(process.env.GITHUB_OUTPUT, 'ready=true\n');
           NODE
 
