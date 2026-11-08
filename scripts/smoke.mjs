@@ -1,8 +1,10 @@
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
+import vm from 'node:vm';
 import {resolveConfig} from './build.mjs';
 const origin='https://physipeak.smganeev.workers.dev';
 const expected=JSON.parse(await fs.readFile('dist/release.json','utf8'));
+const expectedAudience=JSON.parse(await fs.readFile('wrangler.connected.jsonc','utf8')).vars.AUTH0_AUDIENCE;
 async function get(path) {
   const response=await fetch(`${origin}/${path}?release=${encodeURIComponent(expected.commit)}&check=${Date.now()}`,{cache:'no-store',signal:AbortSignal.timeout(15000)});
   if(!response.ok)throw new Error(`${path}: HTTP ${response.status}`);
@@ -14,11 +16,16 @@ async function smoke() {
   for(const [file,hash] of Object.entries(expected.assets)) {
     if(file==='_headers')continue;
     const response=await get(file),body=Buffer.from(await response.arrayBuffer());
-    // The API Worker generates sign-in config with its audience at runtime; validate its public settings below.
+    // The API Worker generates Auth0 config from public runtime settings.
+    // All static assets still require an exact release hash.
     if(file!=='auth0-config.js'&&crypto.createHash('sha256').update(body).digest('hex')!==hash)throw new Error(`${file}: live asset is stale or incompatible.`);
     if(/\.(?:m?js)$/.test(file)&&!/javascript/.test(response.headers.get('content-type')||''))throw new Error(`${file}: incorrect script MIME type.`);
     if(['index.html','auth0-config.js','app.js'].includes(file)&&!/(no-cache|no-store|max-age=0)/.test(response.headers.get('cache-control')||''))throw new Error(`${file}: missing revalidation policy.`);
     if(file==='auth0-config.js'&&JSON.stringify(resolveConfig(body.toString()))!==JSON.stringify(expected.auth))throw new Error('Live Auth0 config differs from the build.');
+    if(file==='auth0-config.js'){
+      const sandbox={window:{}};vm.runInNewContext(body.toString(),sandbox,{timeout:1000});
+      if(sandbox.window.FORMNOTE_AUTH0_CONFIG?.audience!==expectedAudience)throw new Error('Live Auth0 API audience differs from the Worker configuration.');
+    }
   }
   const healthResponse=await get('health');
   if(!healthResponse.headers.get('content-type')?.includes('application/json'))throw new Error('Backend health route returned a page instead of JSON.');

@@ -240,11 +240,11 @@ button, input, select, textarea { font-family: var(--font-ui); }
 .plan-exercise-option strong { color: var(--ink); font-size: 12px; }
 .plan-exercise-option small { color: var(--muted); font-size: 10px; font-weight: 450; }
 .screen-plan .upload-button { background: var(--navy); color: #fff; }
-.screen-plan .care-visit-layout { display: grid; gap: 15px; margin-top: 16px; }
-.screen-plan .care-visit-layout .care-panel { border: 1px solid #E5E9ED; border-radius: 12px; background: #fff; }
-.screen-plan .care-visit-layout > .care-ai-sharing { border: 1px solid #E5E9ED; border-radius: 12px; background: #fff; box-shadow: none; }
-.screen-plan .gemini-intro h2 { color: var(--ink); }
-.screen-plan .care-note-panel { margin-top: 0; }
+.screen-reports .care-visit-layout { display: grid; gap: 15px; margin-top: 16px; }
+.screen-reports .care-visit-layout .care-panel { border: 1px solid #E5E9ED; border-radius: 12px; background: #fff; }
+.screen-reports .care-visit-layout > .care-ai-sharing { border: 1px solid #E5E9ED; border-radius: 12px; background: #fff; box-shadow: none; }
+.screen-reports .gemini-intro h2 { color: var(--ink); }
+.screen-reports .care-note-panel { margin-top: 0; }
 .screen-progress .care-history, .screen-progress .care-panel { border-radius: 12px; }
 .screen-progress .care-history-panel { margin: 0; }
 .screen-progress .record-totals { margin-bottom: 12px; }
@@ -359,4 +359,44 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
+}
+
+/* The introduction occupies one screen; the journal follows below it. */
+.home-opening { min-height:calc(100svh - 40px); display:flex; flex-direction:column; gap:24px; padding-bottom:32px; }
+.home-opening .home-focus.care-hero { height:auto; min-height:360px; flex:1; margin:0; align-items:center; }
+.home-opening .home-focus-copy { align-self:center; padding-block:24px; }
+.home-opening .home-goal-row { margin:0; }
+.brand .official-logo { display:block; width:240px; max-width:100%; height:auto; }
+.auth-brand-mark { width:200px; height:auto; display:block; margin:0 auto 20px; }
+.auth-brand-mark .official-logo { display:block; width:100%; height:auto; border-radius:4px; }
+.brand { margin-bottom:30px; }
+.practice-layout { display:block; max-width:1040px; margin-inline:auto; }
+.practice-aside, #movement .session-actions, #movement .practice-settings, #movement .setup-row,
+#movement .hand-controls-legend, #handControlsStatus, #repGoal, #cameraStatus { display:none!important; }
+#movement .stage:has(#cameraEmpty:not([style*="none"])) { display:none; }
+#movement .stage-instructions, #movement[data-session-active="true"] .stage-instructions { margin:16px 20px 0; padding:16px 0; border:0; border-radius:0; background:transparent; color:var(--navy); }
+#movement .stage-instructions strong { font-size:clamp(21px,2.1vw,30px); color:var(--navy); }
+#movement .stage-instructions span, #movement[data-session-active="true"] .stage-instructions span { color:#65758a; font-size:15px; }
+#handControlsHud { position:static!important; display:block; width:auto; max-width:none; margin:0 20px 20px; padding:0; transform:none; background:transparent; color:var(--navy); border:0; border-radius:0; box-shadow:none; pointer-events:auto; }
+#handControlsHud .hand-controls-hud-message { font-size:13px; font-weight:500; color:#65758a; margin-bottom:12px; }
+#handActionMenu { display:grid; gap:10px; margin:0; }
+#handActionMenu .hand-action-option { min-height:64px; padding:14px 18px; border:1px solid #dde3eb; border-radius:8px; background:#fff; color:var(--navy); font-size:17px; box-shadow:none; }
+#handActionMenu .hand-action-option:hover { background:#f4f7fa; border-color:#a3b2c4; }
+#handActionMenu .hand-action-option[aria-current="true"] { border-color:var(--navy); box-shadow:inset 4px 0 var(--yellow); background:#f8fafc; }
+#handActionMenu .hand-action-index { background:#edf1f6; color:var(--navy); border-radius:5px; }
+#handActionMenu .hand-action-option[aria-current="true"] .hand-action-index { background:var(--yellow); color:var(--navy); }
+#handActionMenu .hand-action-value { color:#65758a; font-size:12px; }
+.practice-photos { margin-top:20px; border-top:1px solid var(--line); padding-top:16px; }
+.practice-photos summary { cursor:pointer; min-height:36px; font-size:14px; font-weight:650; }
+.practice-photos .photo-gallery { margin-top:10px; }
+.practice-layout .session-companion { margin-top:20px!important; }
+@media(max-width:900px) and (min-width:651px) { .brand .official-logo { width:64px; max-width:none; } }
+@media(max-width:650px) {
+ .home-opening { min-height:calc(100svh - 150px); gap:18px; padding-bottom:30px; }
+ .home-opening .home-focus.care-hero { min-height:380px; padding:0 12px; }
+ .home-opening .home-focus-copy { align-self:start; }
+ .home-opening .mountain-scene { top:160px; left:15%; opacity:.7; }
+ #handControlsHud { margin:0 12px 16px; }
+ #handActionMenu .hand-action-option { padding:12px; font-size:16px; grid-template-columns:28px 1fr auto; gap:8px; }
+ #handActionMenu .hand-action-value { max-width:100px; text-align:right; }
 }

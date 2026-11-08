@@ -10,7 +10,7 @@ const stat=(value,label,detail='')=>`<article class="care-stat"><strong>${esc(va
 export function createCarePages(options){
  let scope=options.getScope(), records=[],insights=[],selected=new Set(), selectionTouched=false, busy=false, preview=null, current=null, loadVersion=0;
  let filter={movement:'all',side:'all',days:30};
-  const home=$('screen-home'),checkin=$('screen-checkin'),planPage=$('screen-plan'),progress=$('screen-progress'),visit=$('screen-visit');
+  const home=$('screen-home'),checkin=$('screen-checkin'),planPage=$('screen-plan'),progress=$('screen-reports'),visit=$('screen-visit');
   home.classList.add('care-home');checkin.classList.add('care-checkin');planPage.classList.add('care-plan');progress.classList.add('care-progress');visit.classList.add('care-visit');
  const existingHero=home.querySelector('.home-focus');existingHero.classList.add('care-hero');
  existingHero.classList.add('care-choice-hero');
@@ -32,11 +32,11 @@ export function createCarePages(options){
  historyPanel.innerHTML=`<div class="care-section-head"><div><span class="care-kicker">Your history, in perspective</span><h2>Keep track of showing up.</h2></div><button type="button" class="secondary" id="careExport">Export CSV</button></div>
  <div class="care-filters"><label>Exercise<select id="careExercise"><option value="all">All exercises · repetitions</option><option value="sit">Sit-to-stand</option><option value="reach">Overhead reach</option><option value="elbow">Elbow bend</option></select></label><label>Body side<select id="careSide"><option value="all">Both sides</option><option value="left">Left</option><option value="right">Right</option></select></label><label>Period<select id="carePeriod"><option value="7">Past 7 days</option><option value="30" selected>Past 30 days</option><option value="0">All history</option></select></label></div>
  <div class="care-stats" id="careProgressStats"></div><div id="careChart"></div><p class="care-muted">Counts describe recorded practice. Camera angles are estimates; changes do not establish recovery.</p><div id="careHistory"></div>`;
- progress.querySelector('.screen-heading').after(historyPanel);
+ progress.querySelector('.legacy-progress').append(historyPanel);
   const planPanel=$('physioPlanForm').closest('.card'),photosPanel=$('photoGallery').closest('.card');
   if(planPanel&&!planPage.contains(planPanel))planPage.append(planPanel);
   if(photosPanel&&!$('homePhotosMount').contains(photosPanel))$('homePhotosMount').append(photosPanel);
- const deleteAction=$('clearHistory');deleteAction.textContent='Clear sessions, check-ins & AI drafts';deleteAction.className='quiet';progress.append(deleteAction);
+ const deleteAction=$('clearHistory');deleteAction.textContent='Clear sessions, check-ins & AI drafts';deleteAction.className='quiet';progress.querySelector('.legacy-progress').append(deleteAction);
  $('careExercise').onchange=()=>{filter.movement=$('careExercise').value;renderProgress();};
  $('careSide').onchange=()=>{filter.side=$('careSide').value;renderProgress();};
  $('carePeriod').onchange=()=>{filter.days=Number($('carePeriod').value);renderProgress();};
@@ -53,7 +53,7 @@ export function createCarePages(options){
  </section>
  <div id="careQuestion" hidden></div><details class="care-saved"><summary>Saved Gemini drafts & questions</summary><div id="careSavedInsights"></div></details></section>
  <section class="card care-panel care-note-panel"><div class="care-section-head"><div><span class="care-kicker">3 · Review before sharing</span><h2>Your visit note</h2></div>${badge('Private until you share')}</div><div class="care-actions"><button type="button" class="primary" id="carePrint">Print / save PDF</button><button type="button" class="secondary" id="careCopy">Copy note</button><button type="button" class="quiet" id="careLocal">Use local note</button></div><div id="careVisitDocument"></div><p class="care-muted" id="careNoteStatus" role="status"></p></section>`;
-  planPage.append(visitPanel);
+  progress.append(visitPanel);
  visitPanel.prepend(visitPanel.querySelector('.care-ai-sharing'));
  $('careIncludeContext').onchange=invalidatePreview;
  $('careReviewSharing').onclick=reviewSharing;
