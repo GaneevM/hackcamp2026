@@ -336,6 +336,7 @@ function readPointerCalibration() {
 }
 function showPointerCalibration() {
   setPointerEnabled(false);
+  $('pointerCalibration').classList.remove('swipe-mode');$('pointerSwipeGuide').hidden=true;$('pointerSwipeSteps').hidden=true;
   $('pointerCalibration').hidden=false;$('airPointerCursor').hidden=true;
   airPointer.calibration={stage:'targets',index:0,pairs:[],samples:[],lastHandAt:null,mode:null,swipes:{},targets:pointerCalibrationTargets()};
   $('pointerCalibrationRetry').hidden=true;
@@ -361,14 +362,58 @@ function cancelPointerCalibration() {
   $('airPointerCalibrate').disabled=!app.stream||!handLandmarker;
   setPointerEnabled(false);pointerStatus('Calibration cancelled.');
 }
+function setSwipeCalibrationVisual(state,phase,travel=0,progress=0,message='') {
+  $('pointerSwipeGuide').dataset.phase=phase;
+  const active=phase==='finish'||phase==='done'?2:phase==='swipe'?1:0;
+  $('pointerSwipeSteps').querySelectorAll('li').forEach((item,index)=>{if(index===active)item.setAttribute('aria-current','step');else item.removeAttribute('aria-current');});
+  state.visualTarget=Math.max(0,Math.min(1,travel));state.visualProgressTarget=Math.max(0,Math.min(100,progress));
+  $('pointerCalibrationProgress').setAttribute('aria-label',phase==='ready'?'Starting hold':phase==='finish'?'Ending hold':'Swipe progress');
+  if(message)pointerStatus(message);
+}
+function renderSwipeCalibrationFrame(now) {
+  const state=airPointer.calibration;
+  if(!state||!['up','down'].includes(state.stage))return;
+  const dt=Math.min(80,Math.max(0,now-(state.visualAt??now)));state.visualAt=now;
+  const alpha=matchMedia('(prefers-reduced-motion: reduce)').matches?1:1-Math.exp(-dt/55);
+  state.visualPosition=(state.visualPosition??0)+((state.visualTarget??0)-(state.visualPosition??0))*alpha;
+  state.visualProgress=(state.visualProgress??0)+((state.visualProgressTarget??0)-(state.visualProgress??0))*alpha;
+  const range=innerHeight<=650?30:45,sign=state.stage==='up'?1:-1;
+  $('pointerSwipeGuide').style.setProperty('--live-offset',`${sign*range*(1-state.visualPosition*2)}px`);
+  $('pointerCalibrationProgress').value=state.visualProgress;
+}
+function updateSwipeCalibrationVisual(state,point,now) {
+  const tracker=state.swipe,threshold=tracker.thresholds[state.stage];
+  const history=tracker.history;
+  if(!tracker.anchor){
+    let first=history.at(-1);
+    for(let i=history.length-1;i>=0;i--){if(Math.hypot(history[i].x-point.x,history[i].y-point.y)>=threshold*.22)break;first=history[i];}
+    const hold=Math.min(1,Math.max(0,(now-(first?.at??now))/180));
+    setSwipeCalibrationVisual(state,'ready',0,hold*25,'Hold your whole open hand still.');return;
+  }
+  const signedDistance=state.stage==='up'?tracker.anchor.y-point.y:point.y-tracker.anchor.y;
+  const travel=Math.max(0,Math.min(1,signedDistance/threshold));
+  if(signedDistance < -threshold*.3){setSwipeCalibrationVisual(state,'swipe',0,25,`Follow the arrow: move your whole hand ${state.stage}.`);return;}
+  if(travel<1){setSwipeCalibrationVisual(state,'swipe',travel,25+travel*50,`Move your whole hand ${state.stage} ${state.stage==='up'?'↑':'↓'}`);return;}
+  if(Math.abs(point.x-tracker.anchor.x)>=Math.abs(signedDistance)*.7){setSwipeCalibrationVisual(state,'swipe',travel,75,`Move straight ${state.stage}, following the arrow.`);return;}
+  let first=history.at(-1);
+  for(let i=history.length-1;i>=0;i--){if(Math.hypot(history[i].x-point.x,history[i].y-point.y)>=threshold*.22)break;first=history[i];}
+  const hold=Math.min(1,Math.max(0,(now-(first?.at??now))/280));
+  setSwipeCalibrationVisual(state,'finish',travel,75+hold*24,'Hold here. Keep your open hand still.');
+}
 function beginPointerSwipeCalibration(state,direction) {
   state.stage=direction;state.swipe=new PointerSwipeTracker({up:state.mode==='body'?.2:.035,down:state.mode==='body'?.2:.035});
+  state.confirm=null;state.visualPosition=0;state.visualProgress=0;state.visualAt=null;
+  $('pointerCalibration').classList.add('swipe-mode');$('pointerSwipeGuide').hidden=false;$('pointerSwipeSteps').hidden=false;
+  $('pointerSwipeGuide').dataset.direction=direction;$('pointerSwipeArrow').textContent=direction==='up'?'↑':'↓';
+  $('pointerSwipeGuide').style.removeProperty('--live-offset');
+  $('pointerSwipeDirection').textContent=`Swipe ${direction==='up'?'↑':'↓'}`;
   $('pointerCalibrationTarget').hidden=true;
-  $('pointerCalibrationTitle').textContent=`Swipe ${direction==='up'?'up ↑':'down ↓'}`;
-  $('pointerCalibrationCopy').textContent=`Open your hand. Pause, swipe it ${direction}, then pause again. This gesture will scroll the page ${direction} a small step.`;
+  $('pointerCalibrationTitle').textContent=`Swipe ${direction} ${direction==='up'?'↑':'↓'}`;
+  $('pointerCalibrationCopy').textContent=`Open your whole hand. Move ${direction}, then hold still.`;
   $('pointerCalibrationStep').textContent=direction==='up'?'Scroll setup · 1 of 2':'Scroll setup · 2 of 2';
   $('pointerCalibrationProgress').value=0;
-  pointerStatus('Show an open palm and hold it still briefly.');
+  setSwipeCalibrationVisual(state,'ready',0,0,'Hold your whole open hand still.');
+  $('pointerSwipeGuide').querySelector('.pointer-swipe-demo').getAnimations().forEach(animation=>{animation.currentTime=0;});
 }
 function finishPointerCalibration(state) {
   const config={version:2,map:state.map,mode:state.mode,swipes:state.swipes,fingerprint:pointerFingerprint(),savedAt:new Date().toISOString()};
@@ -394,8 +439,14 @@ function processPointerHand(result,now) {
     const preview=$('pointerCalibrationPreview'),context=preview.getContext('2d');
     context.save();context.translate(preview.width,0);context.scale(-1,1);context.drawImage($('video'),0,0,preview.width,preview.height);context.restore();
     if(hand?.[8]){context.beginPath();context.arc((1-hand[8].x)*preview.width,hand[8].y*preview.height,5,0,Math.PI*2);context.fillStyle='#d9ff67';context.fill();}
+    if(calibration.confirm){
+      if(now<calibration.confirm.until)return;
+      if(calibration.confirm.next==='down')beginPointerSwipeCalibration(calibration,'down');else finishPointerCalibration(calibration);
+      return;
+    }
     if(!hand){
       calibration.samples=[];calibration.swipe?.update(null,now);$('pointerCalibrationProgress').value=0;
+      if(calibration.stage!=='targets')setSwipeCalibrationVisual(calibration,'paused',0,0);
       pointerStatus('Hand not visible. Raise it into the preview; face the camera in even light.');return;
     }
     if(!calibration.mode){
@@ -403,16 +454,16 @@ function processPointerHand(result,now) {
       calibration.mode='body';
     }
     const input=pointerInput(hand,calibration.mode);
-    if(!input){calibration.samples=[];calibration.swipe?.reset();pointerStatus('Show both shoulders and your hand in the preview.');return;}
+    if(!input){calibration.samples=[];calibration.swipe?.reset();if(calibration.stage!=='targets')setSwipeCalibrationVisual(calibration,'paused');pointerStatus('Show both shoulders and your hand in the preview.');return;}
     calibration.lastHandAt=now;
     if(calibration.stage!=='targets'){
-      if(!isOpenPalm(hand)){calibration.swipe.reset();pointerStatus('Open your hand with fingers extended, then pause before swiping.');return;}
+      if(!isOpenPalm(hand)){calibration.swipe.reset();setSwipeCalibrationVisual(calibration,'paused',0,0,'Open your whole hand. Spread your fingers.');return;}
       const stroke=calibration.swipe.update(input.palm,now);
-      $('pointerCalibrationProgress').value=calibration.swipe.movingAt!==null?65:calibration.swipe.anchor?30:0;
-      if(!stroke){pointerStatus(calibration.swipe.anchor?'Swipe, then pause with your hand still.':'Hold your open palm still briefly.');return;}
-      if(stroke.direction!==calibration.stage){pointerStatus(`That was ${stroke.direction}. Try swiping ${calibration.stage}.`);return;}
+      if(!stroke){updateSwipeCalibrationVisual(calibration,input.palm,now);return;}
+      if(stroke.direction!==calibration.stage){setSwipeCalibrationVisual(calibration,'ready',0,0,`Follow the arrow: swipe ${calibration.stage}.`);return;}
       calibration.swipes[stroke.direction]=stroke.distance*.65;
-      if(stroke.direction==='up')beginPointerSwipeCalibration(calibration,'down');else finishPointerCalibration(calibration);
+      calibration.confirm={until:now+700,next:stroke.direction==='up'?'down':'finish'};
+      setSwipeCalibrationVisual(calibration,'done',1,100,`${stroke.direction==='up'?'Up':'Down'} swipe captured ✓`);
       return;
     }
     if(now<calibration.readyAt){pointerStatus('Move to the new dot, then hold.');return;}
@@ -471,6 +522,7 @@ function scrollPointerSurface(direction) {
   pointerStatus(`Scrolled ${direction}. Pause, then swipe again.`);pointerToast(`Scroll ${direction} ${direction==='up'?'↑':'↓'}`);
 }
 function renderPointerFrame(now) {
+  renderSwipeCalibrationFrame(now);
   const cursor=$('airPointerCursor');
   if(!airPointer.enabled||!airPointer.target||now-airPointer.pointAt>240){cursor.hidden=true;resetPointerDwell();airPointer.renderAt=now;return;}
   const dt=Math.min(80,now-(airPointer.renderAt||now));airPointer.renderAt=now;
