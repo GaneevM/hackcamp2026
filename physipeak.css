@@ -187,6 +187,21 @@ button, input, select, textarea { font-family: var(--font-ui); }
 .practice-aside .stat { border: 1px solid #E6EAEE; border-radius: 10px; background: #fff; box-shadow: none; }
 .practice-aside .angle-card { margin-top: 0; }
 .session-companion { margin-top: 0 !important; border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+/* Keep the coaching guide inside its own padded surface. */
+.pushup-coach {
+  min-width: 0;
+  margin: 12px clamp(12px, 1.5vw, 20px) 24px;
+  padding: clamp(16px, 2vw, 24px);
+  border: 1px solid #E5E9ED;
+  border-radius: 12px;
+  background: var(--surface);
+}
+.pushup-lesson { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.pushup-lesson > *, .pushup-live > * { min-width: 0; }
+@media (max-width: 600px) {
+  .pushup-lesson { grid-template-columns: minmax(0, 1fr); }
+}
+
 .voice-controls-card .companion-heading { align-items: flex-start; }
 .voice-controls-card .companion-name h2 { color: var(--ink); font-size: 15px; }
 .voice-controls-card .companion-name p { color: var(--muted); font-size: 11px; }
