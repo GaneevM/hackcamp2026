@@ -1,3 +1,4 @@
+import {createLiveToken,speech} from '../worker/live-provider.js';
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
@@ -25,6 +26,8 @@ export function createIntegratedApp(db, reportMode = 'mock', dependencies = {}) 
   app.get('/api/demo-session', (req, res) => {
     res.json(JSON.parse(readFileSync(new URL('../fixtures/synthetic-session.json', import.meta.url), 'utf8')));
   });
+  const liveDb={prepare(query){return {bind(...args){return {async first(){return db.prepare(query).get(...args);},async run(){return db.prepare(query).run(...args);}};},async run(){return db.prepare(query).run();}};}};
+  for(const [route,handler] of [['/api/live/token',createLiveToken],['/api/voice/speech',speech]])app.post(route,async(req,res)=>{try{res.json(await handler({...process.env,DB:liveDb},'local-demo',req.body));}catch(error){res.status(error.status||502).json({error:error.status?error.message:'Gemini is unavailable.'});}});
   app.use('/api/journal/ai', createSessionInsightsRouter(db, dependencies));
   app.use('/api/journal/checkins', createCheckinRouter(db));
   app.use('/api/journal', createJournalRouter(db));
@@ -36,7 +39,7 @@ export function createIntegratedApp(db, reportMode = 'mock', dependencies = {}) 
   app.use('/voice-assets', express.static(fileURLToPath(new URL('../data/voice/', import.meta.url)), { dotfiles: 'deny', index: false }));
   app.use(express.static(fileURLToPath(new URL('../public/', import.meta.url)), { dotfiles: 'deny', index: false }));
   const root = new URL('../../', import.meta.url);
-  for (const name of ['index.html', 'styles.css', 'redesign.css', 'app.js', 'auth0-config.js', 'companion.js', 'session-metrics.js', 'rep-sound.js', 'care-pages.js', 'care-data.js', 'api-client.js', 'studio.css', 'hand-controls.css', 'physipeak.css', 'auth-flow.mjs', 'hand-controls.mjs', 'movement-counter.mjs', 'pose-calibration.mjs', 'pushup.mjs', 'vendor/auth0-spa-js-2.4.1.min.js']) {
+  for (const name of ['index.html', 'styles.css', 'redesign.css', 'app.js', 'auth0-config.js', 'companion.js', 'session-metrics.js', 'rep-sound.js', 'care-pages.js', 'care-data.js', 'api-client.js', 'live-feedback.js', 'studio.css', 'hand-controls.css', 'physipeak.css', 'auth-flow.mjs', 'hand-controls.mjs', 'movement-counter.mjs', 'pose-calibration.mjs', 'pushup.mjs', 'vendor/auth0-spa-js-2.4.1.min.js']) {
     app.get('/' + name, (req, res) => res.sendFile(fileURLToPath(new URL(name, root))));
   }
   app.get('/', (req, res) => res.sendFile(fileURLToPath(new URL('index.html', root))));

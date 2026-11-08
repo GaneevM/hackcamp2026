@@ -1,3 +1,4 @@
+import {createLiveToken,speech} from './live-provider.js';
 import {createRemoteJWKSet,jwtVerify} from 'jose';
 import {z} from 'zod';
 import {journalSchema,contextSchema} from '../src/journal-validation.js';
@@ -72,6 +73,8 @@ export function createWorker({keySet,generate=generateInsight}={}){
    const scopes=url.searchParams.getAll('scope');
    if(scopes.length>1||scopes.some(value=>value!==scope)||(body?.scope!==undefined&&body.scope!==scope))throw fault(403,'This journal belongs to another profile.');
    const store=createD1Store(env.DB);
+   if(pathname==='/api/live/token'&&request.method==='POST')return json(await createLiveToken(env,scope,body));
+   if(pathname==='/api/voice/speech'&&request.method==='POST')return json(await speech(env,scope,body));
    if(pathname==='/api/journal/sessions'){
     if(request.method==='GET')return json({sessions:await store.list(scope)});
     if(request.method==='DELETE'){await store.clear(scope);return json({cleared:true});}

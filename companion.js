@@ -22,8 +22,8 @@ export function createCompanion(options) {
     <p class="companion-event" data-id="event" aria-live="polite"></p>
     <details class="voice-settings"><summary>Voice settings</summary>
       <div class="voice-settings-grid">
-        <label>Browser backup voice<select data-id="voice"><option value="">System default</option></select></label>
-        <label>Playback<select data-id="source"><option value="gemini" selected>Enhanced voice · browser backup</option><option value="browser">Browser voice only</option></select></label>
+        <label hidden>Browser backup voice<select data-id="voice"><option value="">System default</option></select></label>
+        <label>Playback<select data-id="source"><option value="gemini" selected>Gemini voice</option></select></label>
       </div>
       <div class="companion-actions"><button type="button" class="secondary" data-id="preview">Preview voice</button><button type="button" class="quiet" data-id="stop">Stop speaking</button></div>
       <p class="companion-technical" data-id="status" role="status">Checking saved sessions…</p>
@@ -59,7 +59,7 @@ export function createCompanion(options) {
     if (prefs) {
       el('enabled').checked = prefs.enabled !== false;
       el('mode').value = prefs.mode === 'quiet' ? 'quiet' : 'concise';
-      if (prefs.version === 2 && ['browser', 'gemini'].includes(prefs.source)) el('source').value = prefs.source;
+      el('source').value = 'gemini';
     }
   } catch {}
   function saveVoicePreferences() {
@@ -92,16 +92,28 @@ export function createCompanion(options) {
     if (audio) { audio.pause(); audio = null; }
     window.speechSynthesis?.cancel(); utterance = null;
   }
-  function browserSpeak(text, prefix = '') {
-    if (!('speechSynthesis' in window)) { status(prefix + 'Speech unavailable; read the on-screen message.'); return; }
-    const version = voiceVersion;
-    utterance = new SpeechSynthesisUtterance(text);
-    const selected = voices.find(v => v.voiceURI === el('voice').value);
-    if (selected) utterance.voice = selected;
-    utterance.lang = selected?.lang || 'en-US'; utterance.rate = .95;
-    utterance.onend = () => { if (version === voiceVersion) { utterance = null; status('Ready · browser voice.'); flushQuestion(); } };
-    utterance.onerror = () => { if (version === voiceVersion) { utterance = null; status('Browser speech unavailable. Try another voice.'); } };
-    status(prefix + 'Speaking with browser voice.'); window.speechSynthesis.speak(utterance);
+  document.addEventListener('physipeak-live-speaking', stop);
+  const speechRequests = new Map();
+  async function browserSpeak(text) {
+    const version=voiceVersion;
+    audio={pause(){}};
+    status('Preparing Gemini voice…');
+    try {
+      let pending=speechRequests.get(text);
+      if(!pending){pending=request('/api/voice/speech',{text});speechRequests.set(text,pending);pending.catch(()=>speechRequests.delete(text));}
+      const clip=await pending;
+      if(version!==voiceVersion||!el('enabled').checked)return;
+      const pcm=Uint8Array.from(atob(clip.data),c=>c.charCodeAt(0));
+      const rate=Number(/rate=(\d+)/.exec(clip.mimeType)?.[1])||24000;
+      const wav=new Uint8Array(44+pcm.length),view=new DataView(wav.buffer);
+      const str=(offset,text)=>{for(let i=0;i<text.length;i++)wav[offset+i]=text.charCodeAt(i);};
+      str(0,'RIFF');view.setUint32(4,36+pcm.length,true);str(8,'WAVE');str(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,rate,true);view.setUint32(28,rate*2,true);view.setUint16(32,2,true);view.setUint16(34,16,true);str(36,'data');view.setUint32(40,pcm.length,true);wav.set(pcm,44);
+      const url=URL.createObjectURL(new Blob([wav],{type:'audio/wav'}));
+      audio=new Audio(url);
+      const finish=()=>{URL.revokeObjectURL(url);if(version===voiceVersion){audio=null;flushQuestion();}};
+      audio.onended=finish;audio.onerror=finish;
+      try{await audio.play();status('Speaking with Gemini.');}catch{finish();status('Press Preview voice to allow audio playback.');}
+    }catch{if(version===voiceVersion){audio=null;status('Gemini speech unavailable. Read the on-screen cue.');flushQuestion();}}
   }
   function populateVoices() {
     voices = window.speechSynthesis?.getVoices() || [];
@@ -119,7 +131,7 @@ export function createCompanion(options) {
   el('enabled').onchange = () => {
     stop(); syncVoiceControls(); saveVoicePreferences();
     if (el('enabled').checked) browserSpeak('Spoken feedback is enabled.');
-    else status('Spoken feedback disabled.');
+    else { document.dispatchEvent(new Event('physipeak-voice-muted')); status('Spoken feedback disabled.'); }
   };
 
   const quickVoice = document.getElementById?.('practiceVoice');

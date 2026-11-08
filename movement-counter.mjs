@@ -25,6 +25,7 @@ export class MovementCounter {
   update({ movement, angle, now, position, calibration, context = {} }) {
     if (!Number.isFinite(angle) || !Number.isFinite(now)) { this.interrupt(); return null; }
     const isSit = movement === 'sit';
+    const isElbow = movement === 'elbow';
     const isCrossbody = movement === 'crossbody';
     const hasCalibration = Number.isFinite(calibration?.startAngle) && Number.isFinite(calibration?.endAngle);
     const low = hasCalibration ? Math.min(calibration.startAngle, calibration.endAngle) : null;
@@ -39,7 +40,7 @@ export class MovementCounter {
       : (range === null ? angle >= (isCrossbody ? 45 : 60) : angle >= low + range * .65);
     const backAtStart = isSit
       ? (range === null ? angle >= 45 : angle >= high - Math.max(14, range * .22))
-      : (range === null ? angle <= 22 : angle <= low + Math.max(14, range * .22));
+      : (range === null ? angle <= (isElbow ? 35 : 22) : angle <= low + Math.max(14, range * .22));
     const travelNeeded = range === null ? 25 : Math.max(12, range * .5);
     const enoughTravel = this.startAngle === null || (isSit
       ? this.startAngle - angle >= travelNeeded
@@ -51,9 +52,9 @@ export class MovementCounter {
       if (!nearStart || !position || (isSit && !context.seated)) { this.startAt = this.startAngle = this.anchor = null; return null; }
       if (this.startAt === null) {
         this.startAt = now; this.startAngle = angle; this.anchor = { ...position };
-      } else if (Math.abs(angle - this.startAngle) > 12 || Math.hypot(position.x - this.anchor.x, position.y - this.anchor.y) > .035) {
+      } else if ((!isElbow && Math.abs(angle - this.startAngle) > 12) || Math.hypot(position.x - this.anchor.x, position.y - this.anchor.y) > .035) {
         this.startAt = now; this.startAngle = angle; this.anchor = { ...position };
-      } else if (now - this.startAt >= 650) {
+      } else if (now - this.startAt >= (isElbow ? 150 : 650)) {
         this.phase = 'ready'; this.cycleAt = now; this.peak = angle;
       }
       return null;
@@ -73,7 +74,7 @@ export class MovementCounter {
     if (this.phase === 'target') {
       this.peak = isSit ? Math.min(this.peak, angle) : Math.max(this.peak, angle);
       if (!target) { this.targetAt = null; this.phase = 'ready'; return null; }
-      if (this.targetAt !== null && now - this.targetAt >= 300) {
+      if (this.targetAt !== null && now - this.targetAt >= (isElbow ? 80 : 300)) {
         if (isSit) return this.complete(now);
         this.phase = 'return'; this.returnAt = null;
       }
@@ -83,7 +84,7 @@ export class MovementCounter {
     if (this.phase === 'return') {
       if (backAtStart) {
         if (this.returnAt === null) this.returnAt = now;
-        if (now - this.returnAt >= 250 && now - this.cycleAt >= 1000) return this.complete(now);
+        if (now - this.returnAt >= (isElbow ? 100 : 250) && now - this.cycleAt >= 1000) return this.complete(now);
       } else this.returnAt = null;
     }
     return null;

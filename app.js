@@ -1,3 +1,4 @@
+import { createLiveFeedback } from './live-feedback.js';
 import { configureApiAuth } from './api-client.js';
 import { AuthSession, loadAuthSdk } from './auth-flow.mjs';
 import { createCompanion } from './companion.js';
@@ -64,6 +65,7 @@ const app = {
 };
 
 let companion = null, carePages = null;
+let liveFeedback = null;
 let visionRuntime = null, visionFiles = null, handLandmarker = null;
 const handControls={enabled:false,suspended:false,gesture:'none',seenAt:0,poseAt:0,lastDetectionAt:0,pose:null,side:0,failures:0,label:null,lastHand:null,scroll:new PalmScrollController(),commands:new FingerCommandHold(),surface:null};
 const handCropCanvas=document.createElement('canvas');handCropCanvas.width=512;handCropCanvas.height=512;
@@ -596,7 +598,10 @@ function monitor() {
         else if (app.running && !app.manual && $('exerciseSelect').value !== 'pushup' && $('exerciseSelect').value !== 'wave') movementCounter.interrupt();
       } else { if($('exerciseSelect').value==='pushup'){pushupCounter.pause();showPushupWaiting('Step into view.');} if($('exerciseSelect').value!=='pushup'&&$('exerciseSelect').value!=='wave')movementCounter.interrupt(); resetAutoCalibrationHold('Tracking paused · show the selected joints; the hold will restart automatically.'); app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
       }
-      if (app.running && !app.manual) companion?.observe({ ready: app.poseReady, angle: app.currentAngle, reps: app.reps, phase: app.phase });
+      if (app.running && !app.manual) {
+        const observation={ready:app.poseReady,angle:app.currentAngle,reps:app.reps,phase:$('exerciseSelect').value==='pushup'?pushupCounter.phase:app.phase};
+        companion?.observe(observation); liveFeedback.observe(observation);
+      }
     } catch (error) { console.warn('Pose estimate skipped', error); }
   }
   if(handLandmarker&&handsActive&&frameAt-handControls.lastDetectionAt>=80){
@@ -638,6 +643,7 @@ function setCountdownControls(active) {
 }
 
 function cancelCountdown() {
+  liveFeedback.stop();
   if (app.countdownTimer) clearInterval(app.countdownTimer);
   app.countdownTimer = null; app.countdownActive = false; app.autoStartFromHome = false;
   $('sessionCountdown').hidden = true;
@@ -698,6 +704,7 @@ function beginSession(manual = false) {
   const plannedReps = Number(readPlan().reps);
   companion?.start({ manual, movement: $('exerciseSelect').value,
     targetReps: Number.isInteger(plannedReps) && plannedReps > 0 && plannedReps <= 200 ? plannedReps : null });
+  liveFeedback.start({manual,movement:$('exerciseSelect').value,side:$('bodySide').value,variant:pushupVariant()});
   if(manual) setActive(true); else startCountdown();
 }
 
@@ -720,6 +727,7 @@ $('manualMinus').onclick = () => { app.reps = Math.max(0, app.reps - 1); $('repC
 $('manualPlus').onclick = () => { app.reps += 1; $('repCount').textContent = String(app.reps); companion?.manualRep(app.reps); };
 
 function endSession() {
+  liveFeedback.stop();
   if (!app.running) return;
   const demo = $('exerciseSelect').value === 'wave';
   const duration = Math.max(1, Math.round((Date.now() - app.startedAt) / 60000));
@@ -1490,6 +1498,7 @@ companion = createCompanion({
   },
   resetIncompleteCycle: () => { app.phase = 'ready'; app.sessionStartAngle = null; }
 });
+liveFeedback = createLiveFeedback({getSession:()=>app.running&&!app.manual&&!app.cameraPaused?{manual:false,movement:$('exerciseSelect').value,side:$('bodySide').value,variant:pushupVariant()}:null});
 carePages = createCarePages({ getScope:()=>activeDataScope, getRows:readSessions, setRows:saveSessions, getMovement:()=> $('exerciseSelect').value,
   getPlan:readPlan, getName:()=>authUser?.name || '', navigate:key=>appNavigation.switchTo(key), chooseMovement:movement=>{if(app.running||app.autoCalibration.active){toast('Finish the current session or calibration first.');return;}$('exerciseSelect').value=movement;$('exerciseSelect').dispatchEvent(new Event('change'));appNavigation.switchTo('move');}, clearCheckin:clearCheckinAnswers });
 // Pressing Back from the Auth0 page restores this page from memory with the buttons still disabled.
