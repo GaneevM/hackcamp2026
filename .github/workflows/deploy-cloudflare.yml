@@ -39,8 +39,18 @@ jobs:
         run: |
           node <<'NODE'
           const fs = require('node:fs');
-          const domain = process.env.AUTH0_DOMAIN || '';
-          const clientId = process.env.AUTH0_CLIENT_ID || '';
+          // Values committed in auth0-config.js are the default. The GitHub variables
+          // AUTH0_DOMAIN and AUTH0_CLIENT_ID override them when they are set.
+          let committed = { domain: '', clientId: '' };
+          try {
+            const text = fs.readFileSync('auth0-config.js', 'utf8');
+            committed = {
+              domain: (/domain:\s*'([^']*)'/.exec(text) || [])[1] || '',
+              clientId: (/clientId:\s*'([^']*)'/.exec(text) || [])[1] || '',
+            };
+          } catch {}
+          const domain = (process.env.AUTH0_DOMAIN || '').trim() || committed.domain;
+          const clientId = (process.env.AUTH0_CLIENT_ID || '').trim() || committed.clientId;
           const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '';
           const apiToken = process.env.CLOUDFLARE_API_TOKEN || '';
           if (!accountId || !apiToken) {
