@@ -835,26 +835,66 @@ function applyAuthProfile(user) {
   if (heading) heading.textContent = `Good to see you, ${name.split(/\s+/)[0]}.`;
 }
 
+const AUTH_STATUS_DEFAULT = 'Sign-in is handled securely by Auth0. Formnote never sees your password.';
+const AUTH_BUTTON_IDS = ['authGateGoogle', 'authGateLogin', 'authGateSignup'];
+
+function setAuthGateStatus(message, isError = false) {
+  const box = $('authGateStatus');
+  box.textContent = message || AUTH_STATUS_DEFAULT;
+  box.classList.toggle('error', Boolean(message) && isError);
+}
+
+function setAuthGateBusy(busy) {
+  AUTH_BUTTON_IDS.forEach((id) => { $(id).disabled = busy; });
+}
+
+// Only same-site paths are accepted as a place to return to after sign-in.
+function safeReturnTo(value) {
+  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') && !value.startsWith('/\\') ? value : null;
+}
+
+function friendlyAuthError(code, description) {
+  if (description) return description;
+  if (code === 'access_denied') return 'Sign-in was cancelled or not allowed for this account. Please try again.';
+  return 'We could not sign you in. Please try again.';
+}
+
 async function startAuth0() {
   const config = window.FORMNOTE_AUTH0_CONFIG || {};
   if (!config.domain || !config.clientId) return;
   $('authAction').hidden = false;
   $('authGate').hidden = false;
+  setAuthGateBusy(true);
   try {
     if (!window.auth0?.createAuth0Client) throw new Error('Auth0 could not load. Refresh and check your internet connection.');
     authClient = await window.auth0.createAuth0Client({
       domain: config.domain,
       clientId: config.clientId,
+      // Keep people signed in after a refresh, even in browsers that block the hidden cross-site check.
+      cacheLocation: 'localstorage',
       authorizationParams: { redirect_uri: window.location.origin },
     });
     const params = new URLSearchParams(window.location.search);
-    if (params.has('code') && params.has('state')) {
-      await authClient.handleRedirectCallback();
+    if (params.has('error')) {
+      // Auth0 sent the person back with a problem (cancelled, blocked, not verified...).
+      setAuthGateStatus(friendlyAuthError(params.get('error'), params.get('error_description')), true);
       window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+    } else if (params.has('code') && params.has('state')) {
+      let returnTo = null;
+      try {
+        const result = await authClient.handleRedirectCallback();
+        returnTo = safeReturnTo(result?.appState?.returnTo);
+      } catch (error) {
+        console.error('Auth0 callback failed', error);
+        setAuthGateStatus('We could not finish signing you in. Please try again.', true);
+      }
+      // Always clear the code from the address bar so a refresh does not replay it.
+      window.history.replaceState({}, document.title, returnTo || (window.location.pathname + window.location.hash));
     }
     if (!(await authClient.isAuthenticated())) {
       $('authGate').hidden = false;
       $('authAction').hidden = true;
+      setAuthGateBusy(false);
       return;
     }
     authUser = await authClient.getUser();
@@ -867,22 +907,32 @@ async function startAuth0() {
     render();
     renderPlan();
     renderMedia();
+    if (authUser.email_verified === false) toast('Check your inbox to verify your email address.');
   } catch (error) {
     console.error('Auth0 setup failed', error);
     $('authGate').hidden = false;
-    $('authGate').querySelector('.auth-pending').textContent = error.message || 'Auth0 setup failed. Check the Auth0 settings and refresh.';
-    $('authGateLogin').disabled = true;
+    setAuthGateStatus(error.message || 'Auth0 setup failed. Check the Auth0 settings and refresh.', true);
   }
 }
 
-async function signInWithAuth0() {
+async function signInWithAuth0(authorizationParams = {}) {
+  if (!authClient) { setAuthGateStatus('Sign-in is still loading. Try again in a moment.', true); return; }
+  setAuthGateBusy(true);
   try {
-    if (!authClient) throw new Error('Auth0 has not finished loading yet.');
-    await authClient.loginWithRedirect();
-  } catch (error) { toast(error.message || 'Could not start sign-in.'); }
+    await authClient.loginWithRedirect({
+      authorizationParams,
+      appState: { returnTo: window.location.pathname + window.location.hash },
+    });
+  } catch (error) {
+    setAuthGateBusy(false);
+    setAuthGateStatus(error.message || 'Could not start sign-in.', true);
+    toast(error.message || 'Could not start sign-in.');
+  }
 }
 
-$('authGateLogin').onclick = signInWithAuth0;
+$('authGateGoogle').onclick = () => signInWithAuth0({ connection: 'google-oauth2' });
+$('authGateLogin').onclick = () => signInWithAuth0();
+$('authGateSignup').onclick = () => signInWithAuth0({ screen_hint: 'signup' });
 $('authAction').onclick = async () => {
   if (!authClient) return;
   if (authUser) await authClient.logout({ logoutParams: { returnTo: window.location.origin } });
@@ -905,4 +955,6 @@ companion = createCompanion({
   },
   resetIncompleteCycle: () => { app.phase = 'ready'; app.sessionStartAngle = null; }
 });
+// Pressing Back from the Auth0 page restores this page from memory with the buttons still disabled.
+window.addEventListener('pageshow', (event) => { if (event.persisted && authClient && !authUser) setAuthGateBusy(false); });
 startAuth0();
