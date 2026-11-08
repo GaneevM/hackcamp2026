@@ -1,10 +1,16 @@
 // Camera-only repetition gating. Thresholds are estimates for a prototype,
 // with a user-calibrated range preferred over generic defaults.
+export function seatedStart({hip,knee,ankle}) {
+  if (![hip,knee,ankle].every(p=>p&&Number.isFinite(p.x)&&Number.isFinite(p.y)&&(p.visibility??p.presence??1)>.55)) return false;
+  const shin=Math.hypot(knee.x-ankle.x,knee.y-ankle.y);
+  return shin>.025 && hip.y<ankle.y && Math.abs(hip.y-knee.y)<=shin*.65;
+}
 export class MovementCounter {
   constructor() { this.reset(); }
 
   reset() {
     this.phase = 'find-start';
+    this.missingAt = null;
     this.startAt = null;
     this.startAngle = null;
     this.anchor = null;
@@ -16,7 +22,14 @@ export class MovementCounter {
     this.holds = [];
   }
 
+  pause(now) {
+    if(this.missingAt===null)this.missingAt=now;
+    this.targetAt=null;this.returnAt=null;
+    if(now-this.missingAt>250)this.interrupt();
+  }
+
   interrupt() {
+    this.missingAt=null;
     this.phase = 'find-start';
     this.startAt = this.startAngle = this.anchor = null;
     this.targetAt = this.returnAt = this.cycleAt = this.peak = null;
@@ -24,6 +37,7 @@ export class MovementCounter {
 
   update({ movement, angle, now, position, calibration, context = {} }) {
     if (!Number.isFinite(angle) || !Number.isFinite(now)) { this.interrupt(); return null; }
+    if(this.missingAt!==null){if(now-this.missingAt>250)this.interrupt();this.missingAt=null;}
     const isSit = movement === 'sit';
     const isElbow = movement === 'elbow';
     const isCrossbody = movement === 'crossbody';
@@ -74,7 +88,8 @@ export class MovementCounter {
     if (this.phase === 'target') {
       this.peak = isSit ? Math.min(this.peak, angle) : Math.max(this.peak, angle);
       if (!target) { this.targetAt = null; this.phase = 'ready'; return null; }
-      if (this.targetAt !== null && now - this.targetAt >= (isElbow ? 80 : 300)) {
+      if (this.targetAt === null) this.targetAt = now;
+      if (now - this.targetAt >= (isElbow ? 80 : 300)) {
         if (isSit) return this.complete(now);
         this.phase = 'return'; this.returnAt = null;
       }
