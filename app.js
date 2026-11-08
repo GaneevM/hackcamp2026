@@ -54,6 +54,7 @@ const movements = {
 };
 const app = {
   stream: null, landmarker: null, running: false, raf: 0, facing: 'user', reps: 0,
+  cameraRequest: 0, cameraAcquiring: false,
   countdownActive: false, countdownRemaining: 5, countdownTimer: null,
   phase: 'ready', confidence: null, pain: null, poseReady: false, manual: false,
   side: 'left', currentAngle: null, angleSamples: [], sessionAngles: [], activeSessionId: null,
@@ -92,6 +93,15 @@ function cameraState(label, kind = 'neutral', copy = '', points = '') {
   $('cameraStatus').dataset.state = kind;
   $('statusCopy').textContent = copy;
   if (points) $('pointCount').textContent = points;
+}
+
+function syncCameraControl() {
+  const button = $('enableCamera');
+  const enabled = Boolean(app.stream?.getVideoTracks().some(track => track.readyState === 'live'));
+  button.textContent = enabled ? 'Turn camera off' : 'Enable camera';
+  button.setAttribute('aria-pressed', String(enabled));
+  button.disabled = app.cameraAcquiring || app.running || app.countdownActive || app.autoCalibration.active;
+  button.title = app.cameraAcquiring ? 'Waiting for camera access…' : button.disabled ? 'Finish the session or calibration before turning the camera off.' : '';
 }
 
 function setRating(groupId, valueKey, valueId, format) {
@@ -362,6 +372,7 @@ async function toggleAirPointer() {
     if(!app.stream)await startCamera();
     if(!app.stream)return;
     await loadHandTracker();
+    if(!app.stream){pointerStatus('Camera was turned off. Enable it before using the air pointer.');return;}
     $('airPointerCalibrate').disabled=false;
     const map=readPointerCalibration();
     if(map){airPointer.map=map;airPointer.mustRelease=true;airPointer.releaseAt=null;setPointerEnabled(true);pointerStatus('Release your index finger to arm the pointer.');}
@@ -385,24 +396,66 @@ async function enumerateCameras() {
 
 async function startCamera(deviceId) {
   if (!navigator.mediaDevices?.getUserMedia) { toast('Use a modern browser on localhost or HTTPS.'); return; }
+  const requestId = ++app.cameraRequest;
+  app.cameraAcquiring = true; syncCameraControl();
   try {
     app.stream?.getTracks().forEach((track) => track.stop());app.stream=null;
     const video = deviceId ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } } : { facingMode: { ideal: app.facing }, width: { ideal: 1280 }, height: { ideal: 720 } };
-    app.stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
-    $('video').srcObject = app.stream; $('video').style.display = 'block'; await $('video').play(); $('cameraEmpty').style.display = 'none';
-    $('trackingStatus').classList.add('show'); await enumerateCameras(); $('cameraSelect').value = app.stream.getVideoTracks()[0]?.getSettings().deviceId || deviceId || '';
+    const stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+    if (requestId !== app.cameraRequest) { stream.getTracks().forEach(track => track.stop()); return; }
+    app.stream = stream; app.cameraAcquiring = false; syncCameraControl();
+    $('video').srcObject = stream; $('video').style.display = 'block'; await $('video').play(); $('cameraEmpty').style.display = 'none';
+    if (requestId !== app.cameraRequest || app.stream !== stream) return;
+    $('trackingStatus').classList.add('show'); await enumerateCameras();
+    if (requestId !== app.cameraRequest || app.stream !== stream) return;
+    $('cameraSelect').value = stream.getVideoTracks()[0]?.getSettings().deviceId || deviceId || '';
+    syncCameraControl();
     cameraState('Checking view', 'neutral', 'Finding joints…', '0 joints');
     await loadModel();
+    if (requestId !== app.cameraRequest || app.stream !== stream) return;
     toast('Camera ready. Step into view.');
     if (!app.raf) monitor();
   } catch (error) {
+    if (requestId !== app.cameraRequest) return;
+    app.cameraAcquiring = false;
     app.stream?.getTracks().forEach((track)=>track.stop());app.stream=null;
+    syncCameraControl();
     const message = error.name === 'NotAllowedError' ? 'Allow camera access in browser settings.' : error.name === 'NotFoundError' ? 'No camera found. Try manual logging.' : 'Camera unavailable. Close other camera apps and retry.';
     cameraState('Camera unavailable', 'bad', message); $('trackingTitle').textContent = 'Camera unavailable'; $('trackingCopy').textContent = message; toast(message);
   }
 }
 
-$('enableCamera').onclick = () => startCamera();
+function stopCamera() {
+  if (app.running || app.autoCalibration.active) {
+    toast('Finish the active session or calibration before turning the camera off.');
+    return;
+  }
+  if (app.countdownActive) cancelCountdown();
+  app.cameraRequest++; app.cameraAcquiring = false;
+  setPointerEnabled(false);
+  if (airPointer.calibration) cancelPointerCalibration();
+  app.stream?.getTracks().forEach(track => track.stop());
+  app.stream = null;
+  if (app.raf) cancelAnimationFrame(app.raf);
+  app.raf = 0;
+  $('video').srcObject = null;
+  $('video').style.display = 'none';
+  $('cameraEmpty').style.display = 'grid';
+  $('overlay').getContext('2d').clearRect(0, 0, $('overlay').width, $('overlay').height);
+  $('trackingStatus').classList.add('show');
+  $('trackingTitle').textContent = 'Camera off';
+  $('trackingCopy').textContent = activeMovement().frame;
+  $('startBtn').disabled = true;
+  $('capturePhoto').disabled = true;
+  app.poseReady = false; app.currentAngle = null; app.angleSamples = [];
+  updateAngleText();
+  pointerStatus('Air pointer is off while the camera is off.');
+  syncCameraControl();
+  cameraState('Camera off', 'neutral', 'Camera off · your session history is saved.', '0 joints');
+  toast('Camera off. Your saved progress is unchanged.');
+}
+
+$('enableCamera').onclick = () => app.stream ? stopCamera() : startCamera();
 document.querySelectorAll('[data-movement]').forEach(button => {
   button.onclick = () => {
     if (app.running || app.autoCalibration.active) { toast('Finish the current session or calibration first.'); return; }
@@ -534,6 +587,7 @@ function setActive(active) {
   if (active) $('movement').scrollIntoView({ behavior: 'smooth', block: 'start' });
   document.querySelectorAll('[data-movement]').forEach(button => { button.disabled = active; });
   app.running = active; $('repBadge').classList.toggle('show', active); $('stageStop').classList.toggle('show', active);
+  syncCameraControl();
   const captureButton = $('capturePhoto'); if (captureButton) captureButton.disabled = !active || app.manual || $('exerciseSelect').value === 'wave';
   const isWave = $('exerciseSelect').value === 'wave';
   $('stageStop').textContent = isWave ? 'Finish camera check' : 'Finish & save';
@@ -553,6 +607,7 @@ function setCountdownControls(active) {
   $('manualBtn').disabled = active || wave;
   $('exerciseSelect').disabled = active;
   $('bodySide').disabled = active || wave;
+  syncCameraControl();
 }
 
 function cancelCountdown() {
@@ -603,6 +658,7 @@ function beginSession(manual = false) {
   const target = $('exerciseSelect').value === 'wave' ? 0 : Number(readPlan().reps);
   $('repGoal').textContent = Number.isInteger(target) && target > 0 ? '0 / ' + target + ' session goal' : 'One comfortable rep at a time';
   if (manual) {
+    app.cameraRequest++; app.cameraAcquiring = false;
     setPointerEnabled(false);if(airPointer.calibration)cancelPointerCalibration();
     $('cameraEmpty').style.display = 'grid'; $('video').style.display = 'none'; app.stream?.getTracks().forEach((track) => track.stop()); app.stream = null;
     $('overlay').getContext('2d').clearRect(0, 0, $('overlay').width, $('overlay').height); $('manualCounter').style.display = 'flex';
@@ -655,6 +711,7 @@ function endSession() {
   $('setupTitle').textContent = 'Set up your camera'; $('setupCopy').textContent = activeMovement().prompt || activeMovement().frame;
   document.querySelectorAll('[data-movement]').forEach(button => { button.disabled = false; });
   app.running = false; $('exerciseSelect').disabled = false; $('bodySide').disabled = demo; $('manualCounter').style.display = 'none'; $('repBadge').classList.remove('show'); $('stageStop').classList.remove('show');
+  syncCameraControl();
   $('startBtn').textContent = demo ? 'Start camera check' : 'Start camera session';
   $('startBtn').disabled = !app.stream || !app.landmarker;
   if (demo) { app.manual = false; app.activeSessionId = null; $('trackingTitle').textContent = 'Camera check complete'; $('trackingCopy').textContent = 'Choose an exercise above for a saved session and an end-of-session question.'; toast(`Wave check done · ${row.reps} cycles. Not saved.`); return; }
@@ -705,7 +762,7 @@ function updateMovementUI() {
     : `<strong>Follow your physio’s plan.</strong> ${cfg.title} · camera angle is an estimate.`;
   $('trackingCopy').textContent = cfg.frame; $('setupTitle').textContent = wave ? 'Show one arm' : 'Set up your camera';
   $('setupCopy').textContent = wave ? 'Face camera. Raise hand and wave.' : cfg.prompt;
-  $('enableCamera').textContent = 'Enable camera';
+  syncCameraControl();
   $('cameraRequirement').textContent = wave ? 'Camera needed' : 'Camera optional';
   $('stage').classList.toggle('wave-mode', wave); $('manualBtn').disabled = wave; $('manualBtn').style.opacity = wave ? '.45' : '';
   $('manualBtn').title = wave ? 'Camera required for demo' : 'Log without camera';
@@ -766,7 +823,7 @@ function collectAutoCalibration() {
   const low=Math.min(state.firstAngle,captured); const high=Math.max(state.firstAngle,captured);
   const values=readCalibrations(); const key=calibrationKey(); const previous=values[key];
   values[key]={movement:$('exerciseSelect').value,metric:activeMovement().metric,side:$('bodySide').value,startAngle:low,endAngle:high,targetAngle:previous?.targetAngle??null,source:'guided camera estimate',savedAt:new Date().toISOString()};
-  saveCalibrations(values); state.active=false; state.stage='intro'; $('autoCalibrationDialog').close(); render(); toast('Your camera range is calibrated.');
+  saveCalibrations(values); state.active=false; state.stage='intro'; $('autoCalibrationDialog').close(); syncCameraControl(); render(); toast('Your camera range is calibrated.');
 }
 async function beginAutoCalibration() {
   if ($('exerciseSelect').value==='wave') { toast('Choose a tracked movement to calibrate.'); return; }
@@ -776,7 +833,7 @@ async function beginAutoCalibration() {
   $('autoCalibrationDialog').showModal();
 }
 $('startAutoCalibration').onclick=beginAutoCalibration;
-$('closeAutoCalibration').onclick=()=>{app.autoCalibration.active=false;app.autoCalibration.stage='intro';$('autoCalibrationDialog').close();};
+$('closeAutoCalibration').onclick=()=>{app.autoCalibration.active=false;app.autoCalibration.stage='intro';$('autoCalibrationDialog').close();syncCameraControl();};
 $('cancelAutoCalibration').onclick=$('closeAutoCalibration').onclick;
 $('autoCalAction').onclick=async()=>{
   const state=app.autoCalibration;
@@ -784,7 +841,7 @@ $('autoCalAction').onclick=async()=>{
     $('autoCalStatus').textContent='Starting the camera and pose tracker…';
     if(!app.stream) await startCamera();
     if(!app.stream||!app.landmarker){$('autoCalStatus').textContent='Camera is not ready. Allow access and try again.';return;}
-    state.active=true; beginAutoPoseCapture('start');
+    state.active=true; syncCameraControl(); beginAutoPoseCapture('start');
   } else if(state.stage==='between') beginAutoPoseCapture('end');
 };
 
@@ -1046,7 +1103,7 @@ function buildAppScreens() {
   [['exerciseSelect','Movement'],['bodySide','Body side'],['cameraSelect','Camera']].forEach(([id,label]) => {
     const field = document.createElement('label'); field.textContent = label; field.append($(id)); optionFields.append(field);
   });
-  optionFields.append($('switchCamera')); $('movement').append(cameraOptions);
+  optionFields.append($('switchCamera'), $('airPointerToggle'), $('airPointerCalibrate'), $('airPointerStatus')); $('movement').append(cameraOptions);
   buildPushupCoach();
   // Progress has three separate workspaces, rather than a chart beside a long form.
   const progressNav = document.createElement('nav'); progressNav.className = 'record-nav'; progressNav.setAttribute('aria-label','Progress views');
@@ -1085,12 +1142,14 @@ function buildAppScreens() {
     if (activeScreen === 'move' && key !== 'move' && app.running) { toast('Finish the active session before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.autoCalibration.active) { toast('Finish calibration before leaving Practice.'); return; }
     if (activeScreen === 'move' && key !== 'move' && app.countdownActive) cancelCountdown();
-    if (activeScreen === 'move' && key !== 'move' && app.stream) {
+    if (activeScreen === 'move' && key !== 'move' && (app.stream || app.cameraAcquiring)) {
+      app.cameraRequest++; app.cameraAcquiring = false;
       setPointerEnabled(false);if(airPointer.calibration)cancelPointerCalibration();
-      app.stream.getTracks().forEach((track) => track.stop()); app.stream = null; cancelAnimationFrame(app.raf); app.raf = 0;
+      app.stream?.getTracks().forEach((track) => track.stop()); app.stream = null; cancelAnimationFrame(app.raf); app.raf = 0;
       $('video').srcObject = null; $('video').style.display = 'none'; $('cameraEmpty').style.display = 'grid';
       $('trackingStatus').classList.remove('show'); cameraState('Camera off', 'neutral', 'Allow camera to check framing.', '0 joints');
       $('startBtn').disabled = true;
+      syncCameraControl();
     }
     activeScreen = key;
     Object.values(byName).forEach((screen) => { screen.hidden = screen.dataset.screenView !== key; screen.classList.toggle('screen-active', !screen.hidden); });
