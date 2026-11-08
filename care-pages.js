@@ -1,3 +1,4 @@
+import { apiHeaders } from './api-client.js';
 import {escapeText as esc, dateKey, practiceRows, filterHistory, historySummary, sessionCsv, angleSeries} from './care-data.js';
 const $=id=>document.getElementById(id);
 const date=value=>new Date(value).toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
@@ -61,7 +62,7 @@ export function createCarePages(options){
  window.addEventListener('afterprint',()=>document.body.classList.remove('care-print'));
  $('careCopy').onclick=async()=>{try{await navigator.clipboard.writeText($('careVisitDocument').innerText);$('careNoteStatus').textContent='Note copied. Review it before sharing.';}catch{$('careNoteStatus').textContent='Clipboard is unavailable. Use Print / save PDF instead.';}};
 
- async function request(path,body){const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(45000)});const type=response.headers.get('content-type')||'';if(!type.includes('json'))throw Error('Start the backend and open localhost:3001 to use saved-session insights.');const data=await response.json();if(!response.ok)throw Error(data.error||'Request failed.');return data;}
+ async function request(path,body){const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:await apiHeaders(),...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(45000)});const type=response.headers.get('content-type')||'';if(!type.includes('json'))throw Error('The session server is unavailable. Refresh the page or try again shortly.');const data=await response.json();if(!response.ok)throw Error(data.error||'Request failed.');return data;}
  function download(name,text,type){const url=URL.createObjectURL(new Blob([text],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
  function chosen(){return practiceRows(options.getRows()).filter(r=>selected.has(r.id));}
  function invalidatePreview(){preview=null;$('careSharePreview').hidden=true;$('careConsent').checked=false;syncActions();}
@@ -141,5 +142,5 @@ export function createCarePages(options){
  }
  function openVisit(id){if(id){selectionTouched=true;selected=new Set([id]);current=null;invalidatePreview();}options.navigate('visit');render();reload();}
  render();reload();
- return {render,reload,openVisit,reset(){loadVersion++;records=[];insights=[];current=null;selectionTouched=false;selected.clear();invalidatePreview();$('careQuestion').hidden=true;render();},async saveCheckin(row){const thisScope=options.getScope();try{await request('/api/journal/checkins',{scope:thisScope,checkin:row});if(thisScope===options.getScope())$('checkinFeedback').textContent='Saved on this browser and in local SQLite.';}catch{if(thisScope===options.getScope())$('checkinFeedback').textContent='Saved on this browser. Backend sync unavailable.';}}};
+ return {render,reload,openVisit,reset(){loadVersion++;records=[];insights=[];current=null;selectionTouched=false;selected.clear();invalidatePreview();$('careQuestion').hidden=true;render();},async saveCheckin(row){const thisScope=options.getScope();try{await request('/api/journal/checkins',{scope:thisScope,checkin:row});if(thisScope===options.getScope())$('checkinFeedback').textContent='Saved on this browser and synced to your journal.';}catch{if(thisScope===options.getScope())$('checkinFeedback').textContent='Saved on this browser. Backend sync unavailable.';}}};
 }

@@ -28,6 +28,8 @@ export function build(root=process.cwd(),env=process.env) {
     }
   }
   collect('app.js');
+  const voices=path.join(root,'voice-assets');
+  if(fs.existsSync(voices))for(const file of fs.readdirSync(voices))if(/^(quiet|concise|encouraging)\.json$|^[a-f0-9]{64}\.wav$/.test(file))files.add('voice-assets/'+file);
   if(path.resolve(output)!==path.join(path.resolve(root),'dist'))throw new Error('Invalid output directory.');
   fs.rmSync(output,{recursive:true,force:true});fs.mkdirSync(output);
   const hashes={};

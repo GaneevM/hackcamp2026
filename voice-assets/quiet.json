@@ -1,0 +1,12 @@
+{
+  "mode": "quiet",
+  "voice": "Kore",
+  "model": "gemini-2.5-flash-preview-tts",
+  "clips": {
+    "session_started": null,
+    "rep_completed": null,
+    "tracking_lost": null,
+    "tracking_restored": null,
+    "session_ended": null
+  }
+}

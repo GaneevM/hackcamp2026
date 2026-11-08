@@ -1,3 +1,4 @@
+import { configureApiAuth } from './api-client.js';
 import { AuthSession, loadAuthSdk } from './auth-flow.mjs';
 import { createCompanion } from './companion.js';
 import { createCarePages } from './care-pages.js';
@@ -1389,6 +1390,7 @@ async function startAuth0() {
       const sdk=await loadAuthSdk(document,window);
       authSession=new AuthSession({config:window.FORMNOTE_AUTH0_CONFIG,origin:location.origin,sdk});
       authClient=authSession.client;
+      configureApiAuth(window.FORMNOTE_AUTH0_CONFIG?.audience ? () => authClient.getTokenSilently() : null);
       const result=await authSession.initialize(location.href);
       history.replaceState({},document.title,result.returnTo);
       if(result.error)setAuthGateStatus(result.error,true);else setAuthGateStatus('');
@@ -1400,7 +1402,7 @@ async function startAuth0() {
       render();renderPlan();await renderMedia();
       appNavigation.switchTo(location.hash.slice(1)||'home');lockAuthGate(false);
     } catch(error) {
-      authSession=null;authClient=null;
+      authSession=null;authClient=null;configureApiAuth(null);
       setAuthGateStatus(error.message||'Sign-in could not load. Please try again.',true);
       $('authRetry').hidden=false;
     } finally {setAuthGateBusy(false);authStarting=null;}
@@ -1426,6 +1428,7 @@ $('authAction').onclick=async()=>{
     setHandControlsEnabled(false);
     app.stream?.getTracks().forEach(track=>track.stop());
     authUser=null;activeDataScope='guest';lockAuthGate(true);$('authAction').hidden=true;
+    configureApiAuth(null);
     await authSession.logout();
     authUser=null;activeDataScope='guest';lockAuthGate(true);setAuthGateStatus('');
     $('authAction').hidden=true;

@@ -2,7 +2,8 @@ export function validateAuthConfig(config) {
   if (!config || !/^[a-z0-9][a-z0-9.-]+\.[a-z]{2,}$/i.test(config.domain || '') || !/^[a-z0-9_-]{8,}$/i.test(config.clientId || '')) {
     throw new Error('Sign-in configuration is missing or invalid. Set AUTH0_DOMAIN and AUTH0_CLIENT_ID, then redeploy.');
   }
-  return {domain:config.domain,clientId:config.clientId};
+  if(config.audience && (typeof config.audience!=='string'||!/^https:\/\//.test(config.audience)))throw new Error('Invalid API audience.');
+  return {domain:config.domain,clientId:config.clientId,...(config.audience?{audience:config.audience}:{})};
 }
 export function safeReturnTo(value, origin) {
   if(typeof value!=='string'||!value.startsWith('/')||value.startsWith('//')||/[\\\r\n]/.test(value))return null;
@@ -23,7 +24,7 @@ export function friendlyAuthError(error) {
 export class AuthSession {
   constructor({config,origin,sdk}) {
     const valid=validateAuthConfig(config);this.origin=origin;this.config=valid;
-    this.client=new sdk.Auth0Client({...valid,cacheLocation:'localstorage',authorizationParams:{redirect_uri:origin,scope:'openid profile email'}});
+    this.client=new sdk.Auth0Client({...valid,cacheLocation:'localstorage',authorizationParams:{redirect_uri:origin,scope:'openid profile email',...(valid.audience?{audience:valid.audience}:{})}});
   }
   async initialize(url) {
     const params=new URL(url).searchParams;let error=null,returnTo=cleanCallbackUrl(url);

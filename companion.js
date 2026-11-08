@@ -1,3 +1,4 @@
+import { apiHeaders } from './api-client.js';
 import { SessionMetrics, localQuestion, feedbackText } from './session-metrics.js';
 import { createRepChime } from './rep-sound.js';
 
@@ -76,12 +77,12 @@ export function createCompanion(options) {
 
   async function request(path, body, method = 'POST') {
     const response = await fetch(path, {
-      method, headers: { 'Content-Type': 'application/json' },
+      method, headers: await apiHeaders(),
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(65000)
     });
     const type = response.headers.get('content-type') || '';
-    if (!type.includes('application/json')) throw new Error('Local backend unavailable. Open this app through npm start at localhost:3001.');
+    if (!type.includes('application/json')) throw new Error('The server is unavailable. Refresh the page or try again shortly.');
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Backend request failed.');
     return data;
@@ -268,7 +269,7 @@ export function createCompanion(options) {
     stop(); current = null; viewVersion++; el('followup').hidden = true;
     try {
       const health = await request('/health', undefined, 'GET');
-      if (health.integration !== 'local-journal-v1') throw new Error('Start the updated local backend with npm start.');
+      if (health.integration !== 'local-journal-v1') throw new Error('The connected session server is unavailable.');
       const result = await request('/api/journal/sessions?scope=' + encodeURIComponent(scope), undefined, 'GET');
       if (scope !== options.getScope()) return;
       online = true; el('demo').disabled = false;
@@ -346,15 +347,15 @@ export function createCompanion(options) {
         if (scope !== options.getScope() || version !== viewVersion) return;
         present({ ...saved, kind: 'local', question: localQuestion(session, metrics), answer: null });
         options.onSaved?.();
-        status('Session saved locally. Review selected statistics in Visit note before sharing with Gemini.');
+        status('Session saved. Review selected statistics in Visit note before sharing with Gemini.');
         if (el('enabled').checked && el('mode').value !== 'quiet' && voiceVersion === endVoiceVersion) {
           pendingQuestion = { text: current.question, view: viewVersion, voice: voiceVersion };
           flushQuestion();
         }
-      } catch (error) { if (version === viewVersion) status('Browser history saved; SQLite sync failed: ' + error.message); }
+      } catch (error) { if (version === viewVersion) status('Browser history saved; server sync failed: ' + error.message); }
     },
     async clearHistory() {
-      if (!online) throw new Error('Reconnect the local backend before clearing synchronized history.');
+      if (!online) throw new Error('Reconnect the session server before clearing synchronized history.');
       await request('/api/journal/sessions?scope=' + encodeURIComponent(options.getScope()), undefined, 'DELETE');
       stop(); current = null; viewVersion++; el('followup').hidden = true;
     }

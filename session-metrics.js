@@ -61,7 +61,7 @@ export class SessionMetrics {
       startedAt: this.startedAt,
       durationSeconds: Math.max(0, (now - this.started) / 1000),
       targetReps: this.config.targetReps,
-      angleConvention: movement === 'reach'
+      angleConvention: movement === 'crossbody' ? 'opposite_shoulder_shoulder_wrist_angle_deg' : movement === 'reach'
         ? 'hip_shoulder_elbow_angle_deg_arm_down_is_0'
         : 'flexion_deg_straight_is_0',
       minimumObservedAngleDeg: manual ? null : this.low,

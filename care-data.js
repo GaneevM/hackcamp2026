@@ -16,7 +16,7 @@ export function sessionCsv(rows){
 }
 export function angleSeries(rows){
  const measured=rows.filter(r=>!r.manual&&Number.isFinite(r.angle));
- const groups=new Set(measured.map(r=>r.movement+':'+r.side));
+ const groups=new Set(measured.map(r=>r.movement+':'+r.side+':'+(r.variant||'')));
  if(groups.size>1)return [];
  return measured.sort((a,b)=>new Date(a.date)-new Date(b.date));
 }
