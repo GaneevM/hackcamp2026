@@ -34,8 +34,8 @@ jobs:
           const clientId = process.env.AUTH0_CLIENT_ID || '';
           const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '';
           const apiToken = process.env.CLOUDFLARE_API_TOKEN || '';
-          if (!domain || !clientId || !accountId || !apiToken) {
-            console.log('::notice::Deployment skipped. Add AUTH0_DOMAIN and AUTH0_CLIENT_ID as Actions variables, and CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN as Actions secrets.');
+          if (!accountId || !apiToken) {
+            console.log('::notice::Deployment skipped. Add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN as Actions secrets.');
             fs.appendFileSync(process.env.GITHUB_OUTPUT, 'ready=false\n');
             process.exit(0);
           }
