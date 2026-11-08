@@ -47,16 +47,17 @@ try{
  assert.equal(await page.locator('#stage').isVisible(),false);
  assert.equal(await page.locator('#handControlsHud').evaluate(n=>getComputedStyle(n).position),'static');
  assert.equal(await page.locator('#handActionMenu button:visible').count(),4);
+ await page.setViewportSize({width:1632,height:786});
  await page.evaluate(async()=>{await window.uiFixture.setup();const f=window.uiFixture;f.navigateHandActionList({y:.3},1000,.1);for(let i=1;i<=5;i++)f.navigateHandActionList({y:.7},1000+i*80,.1);});
  assert.equal(await page.locator('[data-hand-action="photo"]').getAttribute('aria-current'),'true');
  await page.locator('[data-hand-action="session"]').click();
  assert.equal(await page.locator('#sessionCountdown').isVisible(),true);
- await page.waitForFunction(()=>{const r=document.getElementById('stage').getBoundingClientRect();return Math.abs(r.top+r.height/2-innerHeight/2)<8;});
+ await page.waitForFunction(()=>{const r=document.getElementById('stage').getBoundingClientRect(),top=document.querySelector('.topbar').getBoundingClientRect().bottom,bottom=innerHeight-document.querySelector('.mobile-nav').getBoundingClientRect().height;return Math.abs(r.top+r.height/2-(top+bottom)/2)<8;});
  await page.locator('#cancelCountdown').click();
  await page.locator('[data-hand-action="photo"]').click();
  assert.equal(await page.locator('#photoCountdown').isVisible(),true);
  assert.equal(await page.locator('#photoCountdownNumber').textContent(),'5');
- await page.waitForFunction(()=>{const r=document.getElementById('stage').getBoundingClientRect();return Math.abs(r.top+r.height/2-innerHeight/2)<8;});
+ await page.waitForFunction(()=>{const r=document.getElementById('stage').getBoundingClientRect(),top=document.querySelector('.topbar').getBoundingClientRect().bottom,bottom=innerHeight-document.querySelector('.mobile-nav').getBoundingClientRect().height;return Math.abs(r.top+r.height/2-(top+bottom)/2)<8;});
  await page.locator('#cancelPhotoCountdown').click();
  assert.equal(await page.locator('#photoCountdown').isVisible(),false);
  await page.waitForTimeout(5200);
@@ -67,6 +68,7 @@ try{
  await page.waitForFunction(()=>document.querySelectorAll('#practicePhotoGallery img').length===1,null,{timeout:10000});
  assert.equal(await page.locator('#photoCountdown').isVisible(),false);
  assert.equal(await page.locator('#photoGallery img').count(),1);
+ assert.ok(await page.locator('#trackingTitle').evaluate(n=>n.getBoundingClientRect().bottom<innerHeight));
  assert.equal(await page.locator('#practicePhotoGallery img').evaluate(n=>n.complete&&n.naturalWidth>0),true);
  await page.screenshot({path:path.join(os.tmpdir(),'physipeak-practice-updated.png')});
  await page.reload();await page.waitForFunction(()=>window.uiFixture&&document.getElementById('authGate').hidden);
@@ -76,7 +78,7 @@ try{
  await page.evaluate(()=>window.uiFixture.setup());
  await page.locator('[data-hand-action="photo"]').click();
  assert.equal(await page.locator('#photoCountdown').isVisible(),true);
- await page.waitForFunction(()=>{const r=document.getElementById('stage').getBoundingClientRect();return Math.abs(r.top+r.height/2-innerHeight/2)<8;});
+ await page.waitForFunction(()=>{const r=document.getElementById('stage').getBoundingClientRect(),top=document.querySelector('.topbar').getBoundingClientRect().bottom,bottom=innerHeight-document.querySelector('.mobile-nav').getBoundingClientRect().height;return Math.abs(r.top+r.height/2-(top+bottom)/2)<8;});
  await page.locator('#cancelPhotoCountdown').click();
  assert.deepEqual(errors,[]);
  console.log('Passed: Reports navigation, desktop/mobile camera centering, visible session/photo countdowns, cancelled photo does not save, photo persistence, responsive width, and no application errors.');

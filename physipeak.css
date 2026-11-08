@@ -400,3 +400,9 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
  #handActionMenu .hand-action-option { padding:12px; font-size:16px; grid-template-columns:28px 1fr auto; gap:8px; }
  #handActionMenu .hand-action-value { max-width:100px; text-align:right; }
 }
+
+/* Frame the preview within the workspace, with its status heading still in view. */
+#movement .stage, #movement[data-session-active="true"] .stage { height:min(67svh, calc(100svh - 180px)); max-height:680px; min-height:0; }
+@media(max-width:650px) {
+  #movement .stage, #movement[data-session-active="true"] .stage { height:min(58svh, calc(100svh - 210px)); }
+}

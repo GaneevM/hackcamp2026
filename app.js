@@ -290,7 +290,12 @@ function stopPalmScroll(){handControls.scroll.stop();handControls.surface=null;}
 function focusCameraStage(){
   stopPalmScroll();resetHandMenuMotion();
   if(app.cameraPaused)setCameraViewPaused(false);
-  $('stage').scrollIntoView({block:'center',inline:'nearest',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+  const stage=$('stage'),header=document.querySelector('.topbar'),mobileNav=document.querySelector('.mobile-nav');
+  const top=Math.max(0,Math.min(innerHeight,header?.getBoundingClientRect().bottom||0));
+  const bottom=innerHeight-(mobileNav?.getBoundingClientRect().height||0);
+  const viewCenter=top+Math.max(0,bottom-top)/2;
+  const bounds=stage.getBoundingClientRect();
+  window.scrollTo({top:Math.max(0,scrollY+bounds.top+bounds.height/2-viewCenter),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
 }
 const handActionNames={camera:'Camera',session:'Session',voice:'Voice',photo:'Capture photo'};
 function isPracticeScreen(){return $('screen-move')?.classList.contains('screen-active')||false;}
