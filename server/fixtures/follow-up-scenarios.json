@@ -1,0 +1,55 @@
+[
+  {
+    "name": "Goal completed with clean tracking",
+    "expectedBehavior": "Offer an optional general note without inventing a problem.",
+    "sessionOverrides": {
+      "sessionId": "scenario-clean-v1",
+      "targetReps": 10,
+      "completedReps": 10,
+      "trackingValidFraction": 1,
+      "trackingLossEvents": 0,
+      "incompleteCycles": 0,
+      "stopReason": "goal_reached"
+    }
+  },
+  {
+    "name": "Session ended below the repetition goal",
+    "expectedBehavior": "Ask for optional context about ending below the goal without assuming why.",
+    "sessionOverrides": {
+      "sessionId": "scenario-early-stop-v1",
+      "targetReps": 10,
+      "completedReps": 4,
+      "durationSeconds": 60,
+      "trackingValidFraction": 1,
+      "trackingLossEvents": 0,
+      "incompleteCycles": 0,
+      "stopReason": "user_ended"
+    }
+  },
+  {
+    "name": "Goal completed with tracking interruptions",
+    "expectedBehavior": "Ask about tracking or camera interruptions rather than implying exercise failure.",
+    "sessionOverrides": {
+      "sessionId": "scenario-tracking-v1",
+      "targetReps": 10,
+      "completedReps": 10,
+      "trackingValidFraction": 0.65,
+      "trackingLossEvents": 5,
+      "incompleteCycles": 0,
+      "stopReason": "goal_reached"
+    }
+  },
+  {
+    "name": "Goal completed with incomplete cycles recorded",
+    "expectedBehavior": "Ask about the incomplete cycles without inventing their timing or cause.",
+    "sessionOverrides": {
+      "sessionId": "scenario-incomplete-v1",
+      "targetReps": 8,
+      "completedReps": 8,
+      "trackingValidFraction": 1,
+      "trackingLossEvents": 0,
+      "incompleteCycles": 3,
+      "stopReason": "goal_reached"
+    }
+  }
+]

@@ -1,11 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { reportRequestSchema } from "./validate-session.js";
 import { reportSchema } from "./report-schema.js";
+import { reportContextSchema } from "./report-context.js";
 import { saveSessions } from "./session-store.js";
 
-export function saveReport(db, input, report, model = null) {
+export function saveReport(
+  db,
+  input,
+  report,
+  model = null,
+  userReportedContext = []
+) {
   const data = reportRequestSchema.parse(input);
   const narrative = reportSchema.parse(report.narrative);
+  const context = reportContextSchema.parse(userReportedContext);
 
   if (!["mock", "gemini"].includes(report.mode)) {
     throw new Error("Invalid report mode.");
@@ -18,8 +26,15 @@ export function saveReport(db, input, report, model = null) {
     throw new Error("Gemini reports require a model name.");
   }
 
-  // Preserve source sessions even if saving the report later fails.
-  // Conflicting session IDs are rejected before creating a report.
+  const sessionIds = new Set(
+    data.sessions.map((session) => session.sessionId)
+  );
+
+  if (context.some((item) => !sessionIds.has(item.sessionId))) {
+    throw new Error("Report context belongs to a different session.");
+  }
+
+  // Preserve source statistics even if saving the report later fails.
   saveSessions(db, data);
 
   const reportId = randomUUID();
@@ -38,7 +53,13 @@ export function saveReport(db, input, report, model = null) {
         0
       )
     },
+    userReportedContext: context,
     narrative
+  };
+
+  const requestSnapshot = {
+    sessionData: data,
+    userReportedContext: context
   };
 
   db.exec("BEGIN IMMEDIATE");
@@ -57,7 +78,7 @@ export function saveReport(db, input, report, model = null) {
       reportId,
       report.mode,
       storedModel,
-      JSON.stringify(data),
+      JSON.stringify(requestSnapshot),
       JSON.stringify(response),
       createdAt
     );

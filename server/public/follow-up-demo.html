@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Post-session companion test</title>
+  <style>
+    body {
+      max-width: 760px;
+      margin: 40px auto;
+      padding: 0 20px;
+      font-family: system-ui, sans-serif;
+      background: #f7f6ef;
+      color: #20382a;
+    }
+    label { display: block; margin-top: 18px; }
+    input, select, textarea {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 12px;
+      margin: 6px 0;
+      font: inherit;
+    }
+    button {
+      padding: 12px 16px;
+      margin: 8px 8px 8px 0;
+      font: inherit;
+      cursor: pointer;
+    }
+    #question {
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+    }
+    #status { min-height: 28px; }
+    small { display: block; }
+  </style>
+</head>
+<body>
+  <h1>Post-session companion test</h1>
+  <p>
+    Synthetic demonstration only. Use fictional answers.
+    This page uses concise-mode questions.
+  </p>
+
+  <label for="session">Saved session ID</label>
+  <input id="session" value="demo-001" maxlength="100">
+  <button id="load">Load or generate question</button>
+  <small>
+    Reuses a saved question when available. Otherwise makes one
+    Gemini text request.
+  </small>
+
+  <h2>Companion question</h2>
+  <p id="question" aria-live="polite">No question loaded.</p>
+
+  <label for="voice">Speech source</label>
+  <select id="voice">
+    <option value="browser">Browser voice — no Gemini speech request</option>
+    <option value="gemini">Gemini audio — browser fallback if unavailable</option>
+  </select>
+
+  <label for="browser-voice">Browser voice / fallback voice</label>
+  <select id="browser-voice">
+    <option value="">System default</option>
+  </select>
+  <small id="voice-info">
+    Loading available browser voices…
+  </small>
+  <button id="preview">Preview browser voice</button>
+
+  <button id="speak" disabled>Read question aloud</button>
+  <button id="stop">Stop speaking</button>
+
+  <p id="status" role="status">Ready.</p>
+
+  <label for="answer">Optional fictional explanation</label>
+  <textarea id="answer" rows="4" maxlength="2000" disabled
+    placeholder="For example: Someone came to the door, so I stopped."></textarea>
+  <button id="save" disabled>Save explanation</button>
+  <small>
+    Stored as user-reported context, separately from measured statistics.
+    This version preserves the first saved answer.
+  </small>
+
+  <script type="module">
+    const sessionInput = document.querySelector("#session");
+    const loadButton = document.querySelector("#load");
+    const questionElement = document.querySelector("#question");
+    const voiceSelect = document.querySelector("#voice");
+    const browserVoiceSelect = document.querySelector("#browser-voice");
+    const voiceInfo = document.querySelector("#voice-info");
+    const previewButton = document.querySelector("#preview");
+    const speakButton = document.querySelector("#speak");
+    const stopButton = document.querySelector("#stop");
+    const answerInput = document.querySelector("#answer");
+    const saveButton = document.querySelector("#save");
+    const status = document.querySelector("#status");
+
+    const supportsSpeech = "speechSynthesis" in window;
+    const preferenceKey = "exercise-demo-browser-voice";
+
+    let current = null;
+    let audio = null;
+    let utterance = null;
+    let playbackVersion = 0;
+    let saving = false;
+    let availableVoices = [];
+    let preferredVoice = "";
+
+    try {
+      preferredVoice = localStorage.getItem(preferenceKey) || "";
+    } catch {
+      // Voice selection still works if browser storage is unavailable.
+    }
+
+    async function request(url, options = {}) {
+      const response = await fetch(url, options);
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(body.error || "Request failed.");
+      }
+
+      return body;
+    }
+
+    function post(url, body) {
+      return request(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+    }
+
+    function stopSpeaking() {
+      playbackVersion++;
+
+      if (audio) {
+        audio.pause();
+        audio = null;
+      }
+
+      if (supportsSpeech) {
+        window.speechSynthesis.cancel();
+      }
+
+      utterance = null;
+    }
+
+    function refreshAnswerControls() {
+      const answered = current?.answer !== null;
+      answerInput.disabled = !current || answered;
+      saveButton.disabled =
+        !current || answered || saving || !answerInput.value.trim();
+    }
+
+    function populateVoices() {
+      if (!supportsSpeech) {
+        browserVoiceSelect.disabled = true;
+        previewButton.disabled = true;
+        voiceInfo.textContent =
+          "Browser speech is unavailable in this browser.";
+        return;
+      }
+
+      availableVoices = window.speechSynthesis.getVoices();
+
+      const defaultOption = document.createElement("option");
+      defaultOption.value = "";
+      defaultOption.textContent = "System default";
+      browserVoiceSelect.replaceChildren(defaultOption);
+
+      for (const voice of availableVoices) {
+        const option = document.createElement("option");
+        option.value = voice.voiceURI;
+        option.textContent =
+          `${voice.name} — ${voice.lang}` +
+          (voice.localService ? " (local)" : "");
+        browserVoiceSelect.append(option);
+      }
+
+      if (
+        availableVoices.some(
+          (voice) => voice.voiceURI === preferredVoice
+        )
+      ) {
+        browserVoiceSelect.value = preferredVoice;
+      }
+
+      voiceInfo.textContent = availableVoices.length
+        ? `${availableVoices.length} voices available. Preview names to find one you prefer.`
+        : "No named voices listed yet. You can try the system default.";
+    }
+
+    function readWithBrowser(text, prefix = "") {
+      if (!supportsSpeech) {
+        status.textContent =
+          prefix + "Browser speech is unavailable. The question remains readable.";
+        return;
+      }
+
+      const version = playbackVersion;
+      const selectedVoice = availableVoices.find(
+        (voice) => voice.voiceURI === browserVoiceSelect.value
+      );
+
+      utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = selectedVoice?.lang || "en-US";
+      utterance.rate = 0.95;
+
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+      }
+
+      utterance.onend = () => {
+        if (version === playbackVersion) {
+          status.textContent = "Finished — browser-generated voice.";
+          utterance = null;
+        }
+      };
+
+      utterance.onerror = () => {
+        if (version === playbackVersion) {
+          status.textContent =
+            "Browser playback failed. Try another voice.";
+          utterance = null;
+        }
+      };
+
+      status.textContent =
+        prefix + "Speaking with browser voice: " +
+        (selectedVoice?.name || "system default");
+
+      window.speechSynthesis.speak(utterance);
+    }
+
+    browserVoiceSelect.addEventListener("change", () => {
+      stopSpeaking();
+      preferredVoice = browserVoiceSelect.value;
+
+      try {
+        localStorage.setItem(preferenceKey, preferredVoice);
+        status.textContent = "Browser voice preference saved.";
+      } catch {
+        status.textContent = "Voice selected for this visit.";
+      }
+    });
+
+    previewButton.addEventListener("click", () => {
+      stopSpeaking();
+      readWithBrowser(
+        "Hello! This is the selected voice for your exercise companion."
+      );
+    });
+
+    stopButton.addEventListener("click", () => {
+      stopSpeaking();
+      status.textContent = "Speech stopped.";
+    });
+
+    voiceSelect.addEventListener("change", () => {
+      stopSpeaking();
+      status.textContent = "Speech source changed.";
+    });
+
+    answerInput.addEventListener("input", refreshAnswerControls);
+
+    loadButton.addEventListener("click", async () => {
+      const sessionId = sessionInput.value.trim();
+      if (!sessionId) return;
+
+      stopSpeaking();
+      current = null;
+      speakButton.disabled = true;
+      loadButton.disabled = true;
+      answerInput.value = "";
+      questionElement.textContent = "Loading question…";
+      refreshAnswerControls();
+      status.textContent = "Looking up the saved session.";
+
+      try {
+        current = await post("/api/follow-ups", {
+          sessionId,
+          mode: "concise"
+        });
+
+        questionElement.textContent = current.question;
+        answerInput.value = current.answer || "";
+        speakButton.disabled = false;
+        refreshAnswerControls();
+
+        status.textContent = current.answer === null
+          ? "Question ready. Add context or leave it unanswered."
+          : "Loaded the saved question and user-reported explanation.";
+      } catch (error) {
+        questionElement.textContent = "No question loaded.";
+        status.textContent = error.message;
+      } finally {
+        loadButton.disabled = false;
+      }
+    });
+
+    speakButton.addEventListener("click", async () => {
+      if (!current) return;
+
+      stopSpeaking();
+      const version = playbackVersion;
+      const selected = current;
+
+      if (voiceSelect.value === "browser") {
+        readWithBrowser(selected.question);
+        return;
+      }
+
+      speakButton.disabled = true;
+      status.textContent = "Preparing Gemini audio; this may take several seconds.";
+
+      try {
+        const result = await post(
+          `/api/follow-ups/${encodeURIComponent(selected.followUpId)}/audio`,
+          {}
+        );
+
+        if (version !== playbackVersion) return;
+
+        audio = new Audio(result.audioUrl);
+        audio.onended = () => {
+          if (version === playbackVersion) {
+            status.textContent = "Finished — Gemini-generated audio.";
+            audio = null;
+          }
+        };
+
+        await audio.play();
+
+        if (version === playbackVersion) {
+          status.textContent = "Playing Gemini-generated audio.";
+        }
+      } catch {
+        if (version !== playbackVersion) return;
+
+        if (audio) {
+          audio.pause();
+          audio = null;
+        }
+
+        readWithBrowser(
+          selected.question,
+          "Gemini audio unavailable. "
+        );
+      } finally {
+        speakButton.disabled = !current;
+      }
+    });
+
+    saveButton.addEventListener("click", async () => {
+      if (!current || saving || !answerInput.value.trim()) return;
+
+      saving = true;
+      loadButton.disabled = true;
+      refreshAnswerControls();
+      status.textContent = "Saving user-reported context…";
+
+      try {
+        current = await post(
+          `/api/follow-ups/${encodeURIComponent(current.followUpId)}/answer`,
+          { answer: answerInput.value.trim() }
+        );
+
+        answerInput.value = current.answer;
+        status.textContent =
+          "Explanation saved as user-reported context. Measurements unchanged.";
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        saving = false;
+        loadButton.disabled = false;
+        refreshAnswerControls();
+      }
+    });
+
+    if (supportsSpeech) {
+      window.speechSynthesis.addEventListener(
+        "voiceschanged",
+        populateVoices
+      );
+    }
+
+    populateVoices();
+    window.addEventListener("beforeunload", stopSpeaking);
+  </script>
+</body>
+</html>
