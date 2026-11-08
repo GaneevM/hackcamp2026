@@ -10,7 +10,7 @@ const {chromium}=createRequire(import.meta.url)('playwright');
 const root=path.resolve('dist');
 const sdk=`window.auth0={Auth0Client:class {async checkSession(){} async isAuthenticated(){return true} async getUser(){return {sub:'pointer-fixture',name:'Pointer Test'}}}};`;
 const harness=`
-window.pointerFixture={app,airPointer,showPointerCalibration,beginPointerSwipeCalibration,processPointerHand,renderPointerFrame,
+window.pointerFixture={app,airPointer,showPointerCalibration,beginPointerSwipeCalibration,processPointerHand,renderPointerFrame,alignPointerCursor,readPointerCalibration,readPose,updatePointerCameraStatus,
  async setup(){const canvas=document.createElement('canvas');canvas.width=1280;canvas.height=720;canvas.getContext('2d').fillRect(0,0,1280,720);app.stream=canvas.captureStream(20);$('video').srcObject=app.stream;await $('video').play();handLandmarker={};airPointer.pose=Array.from({length:33},()=>({x:.5,y:.5,visibility:1}));airPointer.pose[11]={x:.35,y:.4,visibility:1};airPointer.pose[12]={x:.65,y:.4,visibility:1};},
  hand(x,y,open=false){const hand=Array.from({length:21},()=>({x,y:y+.1,z:0}));hand[0]={x,y:y+.15,z:0};for(const [pip,tip] of [[6,8],[10,12],[14,16],[18,20]]){hand[pip]={x,y:y+.06,z:0};hand[tip]={x,y:y+(open?0:.12),z:0};}hand[8]={x,y,z:0};return hand;},
  fist(x=.5,y=.5){const hand=this.hand(x,y);hand[8]={x,y:y+.12,z:0};return hand;},
@@ -54,12 +54,26 @@ try{
       if(document.querySelector('#pointerSwipeGuide').dataset.phase!=='done')throw new Error('Successful swipe did not show confirmation');
       for(let i=0;i<10;i++){now+=80;f.frame(f.hand(.5,end,true),now);}
     };
-    if(f.airPointer.calibration.stage!=='up')throw new Error('Four dots did not reach swipe setup');
+    if(f.airPointer.calibration.stage!=='verify')throw new Error('Four dots did not reach the live cursor check');
+    const target=f.airPointer.calibration.checkTarget;
+    for(let i=0;i<12;i++){now+=80;f.frame(f.hand(.2+target.x*.5,.1+target.y*.5),now);}
+    if(f.airPointer.calibration.stage!=='up'||!f.airPointer.calibration.verified)throw new Error('A working cursor did not pass the alignment check');
     swipe(.65,.25);if(f.airPointer.calibration.stage!=='down')throw new Error('Up swipe did not advance');
     swipe(.25,.65);window.pointerFixtureTime=now;
-    return {enabled:f.airPointer.enabled,closed:document.getElementById('pointerCalibration').hidden,config:f.airPointer.config};
+    return {enabled:f.airPointer.enabled,closed:document.getElementById('pointerCalibration').hidden,config:f.airPointer.config,saved:f.readPointerCalibration()};
   });
   assert.equal(calibration.enabled,true);assert.equal(calibration.closed,true);assert.ok(calibration.config.swipes.up>.1&&calibration.config.swipes.down>.1);
+  assert.equal(calibration.saved.version,3);assert.equal(calibration.saved.verified,true);
+  const withoutBody=await page.evaluate(()=>{
+    const f=window.pointerFixture;f.airPointer.pose=null;f.airPointer.reference=null;let now=window.pointerFixtureTime;
+    for(let i=0;i<10;i++){now+=80;f.frame(f.hand(.45,.4),now);}
+    const works=f.airPointer.gesture==='point'&&!!f.airPointer.target,handMessage=document.getElementById('trackingTitle').textContent;
+    f.readPose([],null);const idleState=document.getElementById('cameraStatus').dataset.state;
+    f.app.running=true;f.readPose([],null);const activeState=document.getElementById('cameraStatus').dataset.state;
+    f.app.running=false;f.updatePointerCameraStatus(now);window.pointerFixtureTime=now;
+    return {works,handMessage,idleState,activeState};
+  });
+  assert.equal(withoutBody.works,true);assert.equal(withoutBody.handMessage,'Hand controls ready');assert.equal(withoutBody.idleState,'good');assert.equal(withoutBody.activeState,'bad');
   const navigation=await page.evaluate(()=>{
     const f=window.pointerFixture;let now=window.pointerFixtureTime;
     for(let i=0;i<8;i++){now+=80;f.frame(f.hand(.5,.4,true),now);}
@@ -118,8 +132,36 @@ try{
   assert.ok(latch.clickDelay>=650&&latch.clickDelay<950,JSON.stringify(latch));
   assert.equal(latch.firstCount,1);assert.equal(latch.finalCount,1);assert.equal(latch.movedAway,true);
   await page.setViewportSize({width:390,height:844});
-  const layout=await page.evaluate(()=>{window.pointerFixture.showPointerCalibration();const panel=document.querySelector('.pointer-calibration-panel').getBoundingClientRect(),dot=document.getElementById('pointerCalibrationTarget').getBoundingClientRect();return {panelBottom:panel.bottom,dotTop:dot.top,dotBottom:dot.bottom,height:innerHeight};});
-  assert.ok(layout.dotTop>=layout.panelBottom&&layout.dotBottom<layout.height,JSON.stringify(layout));
+  const layout=await page.evaluate(()=>{window.pointerFixture.showPointerCalibration();const panel=document.querySelector('.pointer-calibration-panel').getBoundingClientRect(),dot=document.getElementById('pointerCalibrationTarget').getBoundingClientRect();return {panelTop:panel.top,panelBottom:panel.bottom,dotTop:dot.top,dotBottom:dot.bottom,height:innerHeight};});
+  assert.ok((layout.dotBottom<=layout.panelTop||layout.dotTop>=layout.panelBottom)&&layout.dotBottom<layout.height,JSON.stringify(layout));
+  for(const [width,height] of [[320,568],[1280,600]]){
+    await page.setViewportSize({width,height});
+    const positions=await page.evaluate(()=>{
+      window.pointerFixture.showPointerCalibration();const panel=document.querySelector('.pointer-calibration-panel').getBoundingClientRect(),dot=document.getElementById('pointerCalibrationTarget').getBoundingClientRect();
+      return {overlap:dot.right>panel.left&&dot.left<panel.right&&dot.bottom>panel.top&&dot.top<panel.bottom,panelHeight:panel.height,panelTop:panel.top,panelBottom:panel.bottom,dotTop:dot.top,dotBottom:dot.bottom,height:innerHeight};
+    });
+    assert.ok(!positions.overlap&&positions.panelTop>=0&&positions.panelBottom<=height,JSON.stringify({width,...positions}));
+  }
+  await page.setViewportSize({width:390,height:844});
+  const handOnly=await page.evaluate(()=>{
+    const f=window.pointerFixture;f.airPointer.pose=null;f.showPointerCalibration();let now=f.now+500;
+    for(let index=0;index<4;index++){
+      const state=f.airPointer.calibration;state.readyAt=now;const target=state.targets[index];
+      for(let i=0;i<15&&state.index===index;i++){now+=180;f.frame(f.hand(.2+target.x*.5,.1+target.y*.5),now);}
+      if(state.index!==index+1)throw new Error('Low-frame-rate hand-only calibration did not advance');
+    }
+    const state=f.airPointer.calibration;if(state.stage!=='verify'||state.mode!=='camera')throw new Error('Hand-only calibration did not reach validation');
+    const target=state.checkTarget,aim=f.hand(.2+target.x*.5,.1+target.y*.5);
+    state.map.x[2]+=.25;
+    for(let i=0;i<12;i++){now+=80;f.frame(aim,now);}
+    const rejectedBadMap=state.stage==='verify'&&!state.verified;
+    f.alignPointerCursor();for(let i=0;i<3;i++){now+=80;f.frame(aim,now);}
+    const requiresMovement=state.checkMustMove;
+    for(let i=0;i<12;i++){now+=80;f.frame(f.hand(.2+(target.x-.25)*.5,.1+target.y*.5),now);}
+    for(let i=0;i<30&&state.stage==='verify';i++){now+=80;f.frame(aim,now);}
+    return {rejectedBadMap,requiresMovement,corrected:state.verified&&state.stage==='up'};
+  });
+  assert.deepEqual(handOnly,{rejectedBadMap:true,requiresMovement:true,corrected:true});
   await page.emulateMedia({reducedMotion:'no-preference'});
   await page.setViewportSize({width:1280,height:800});
   for(const direction of ['up','down']){
@@ -147,5 +189,5 @@ try{
   await page.emulateMedia({reducedMotion:'reduce'});
   assert.equal(await page.locator('.pointer-swipe-demo').evaluate(node=>getComputedStyle(node).animationName),'none');
   assert.deepEqual(errors,[]);
-  console.log('Browser smoke passed: calibration, directions and accessible layouts; full-page continuous scrolling; fist/loss/focus stops; latched jittery holds; brief-loss recovery; deliberate exit; 650ms buttons; and disabled-control protection. Synthetic landmarks only.');
+  console.log('Browser smoke passed: verified personal finger calibration; hand-only and low-frame-rate setup; live re-centering; operation without shoulders; separate exercise warnings; accessible swipe lessons; continuous palm scrolling; fist stops; and 650ms latched buttons. Synthetic landmarks only.');
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}
