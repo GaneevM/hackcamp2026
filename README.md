@@ -20,17 +20,20 @@ npm.cmd --prefix server start
 
 Open <http://localhost:3001>. Use Node.js 24 or newer. Keep existing server/.env private; see server/.env.example for model configuration. Local notes work without an API key. Camera access requires localhost or HTTPS.
 
-## Air pointer and swipe scrolling
+## Hand controls
 
-In Practice, open **Camera & body side → Enable air pointer**. Keep one index finger extended and move your whole hand to four comfortable corners of your reach, holding still at each one. The preview highlights the measured fingertip and the setup learns your pointing pose. A live cursor check must pass before the swipe lessons; Re-center adjusts alignment and Redo positions restarts the four holds. Setup also works with only the hand visible and tolerates slower camera observations.
+Click **Enable hand controls** in Practice. No pointer calibration is required.
 
-Point with your index finger to move the cursor. It latches onto a control through small shakes; move clearly outside the control to release it. Regular controls activate after 650 ms of tracked hold time (Start 800 ms, Capture photo 700 ms, Finish/destructive actions 1100 ms). Brief tracking hiccups pause the timer; a lost hand cannot finish a click. Relax the finger before clicking again.
+- Hold one index finger for 0.65 seconds to pause or resume the exercise camera view.
+- Hold index and middle fingers for 0.65 seconds to start or finish the exercise session. Starting keeps the five-second preparation countdown; a second deliberate command during the countdown cancels it.
+- Relax into a fist or open palm between commands. A held gesture fires once, and a tracking loss cannot rearm it.
+- Open your palm, pause briefly at neutral, then raise or lower it to scroll continuously. Moving farther scrolls faster; a fist stops immediately.
 
-For continuous scrolling, open your palm and hold it briefly at a comfortable neutral position. Raise it to scroll up or lower it to scroll down; farther from neutral scrolls faster. Keep the hand there to travel the whole page. Make a fist to stop immediately and reset neutral. Returning to neutral also stops; missing tracking, pointing, losing focus, and changing sections stop scrolling. Press Escape to disable the pointer. The camera stays on across sections while the pointer is enabled; use Turn camera off in Practice when finished.
+Finish an active session with two fingers before pausing the view. Pausing hides the exercise view and stops body measurement, while the webcam stays on for hand sensing so a gesture can resume it. This is labelled visibly. **Turn camera off** fully stops all webcam tracks and hand controls; use **Enable camera** manually to restart. Disabling hand controls while the view is paused resumes the view. Escape disables hand controls.
 
-The tracker crops around distant wrists or the last tracked hand, filters tracking spikes, and renders between camera observations. When shoulders are available they assist distance compensation; a saved reference keeps hand control operating when they disappear. Recognizable fingers must stay visible. Exercise framing warnings appear for an exercise session, while idle hand control shows its own status and finger overlay. Image crops use MediaPipe's [image detection API](https://developers.google.com/edge/api/mediapipe/js/tasks-vision.handlandmarker). Version 3 requires a fresh, verified pointer setup without clearing session history or photos.
+Hand processing stays on the device. The tracker can crop around a wrist or last tracked hand, and scroll sensitivity is estimated from hand size. Recognizable fingers must remain visible. Exercise angles, calibration, session history, photos, and reports retain their existing behavior.
 
-Pointer regression checks run with `node --test tests/air-pointer.test.mjs`. The optional `node tests/pointer-browser-smoke.mjs` check requires Node 20+, Playwright, an installed Chromium browser, and a freshly built `dist/` from `node scripts/build.mjs`. It serves a local synthetic identity and video, tests calibration and scrolling, and never accesses a webcam. A real camera check at the intended distance and lighting is still needed.
+Run `node --test tests/hand-controls.test.mjs` for gesture and scrolling checks. The optional `node tests/hand-controls-browser-smoke.mjs` check requires Node 20+, Playwright, an installed Chromium browser, and a fresh `dist/` from `node scripts/build.mjs`. It uses synthetic video and hands, not a webcam or a real Auth0 account. Physical camera performance still needs checking on the intended device.
 
 ## Sign-in (Auth0)
 
