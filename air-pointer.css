@@ -1,6 +1,8 @@
 .air-pointer-cursor{position:fixed;left:0;top:0;z-index:12000;width:42px;height:42px;border:2px solid #fff;border-radius:50%;background:conic-gradient(#2d6c58 var(--dwell,0%),rgba(255,255,255,.42) 0);box-shadow:0 1px 8px #13271f77;will-change:transform;transition:none!important;pointer-events:none}
 .air-pointer-cursor::after{content:"";position:absolute;inset:4px;border-radius:50%;background:#255b4a}
 .air-pointer-cursor i{position:absolute;z-index:1;inset:12px;border-radius:50%;background:#fff}
+.air-pointer-cursor.is-latched{border-color:#d7f2de;box-shadow:0 0 0 3px #245b42,0 1px 8px #13271f55}
+.air-pointer-cursor.is-paused{opacity:.5}
 .air-pointer-status{position:fixed;z-index:11999;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);max-width:min(92vw,440px);padding:10px 15px;background:#17392f;color:white;border-radius:10px;font-size:13px;text-align:center;box-shadow:0 5px 20px #0003;pointer-events:none}
 .pointer-calibration{position:fixed;inset:0;z-index:13000;background:#14231fdd;color:#fff}
 .pointer-calibration-panel{position:absolute;top:18px;left:50%;width:min(440px,calc(100vw - 28px));transform:translateX(-50%);padding:18px 20px;background:#fff;color:#1c2923;border-radius:14px;box-shadow:0 10px 35px #0004;text-align:center;pointer-events:auto}
