@@ -1,0 +1,55 @@
+name: Deploy Formnote to Cloudflare
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "frontend/**"
+      - "wrangler.jsonc"
+      - ".github/workflows/deploy-cloudflare.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Prepare deployment configuration
+        id: config
+        env:
+          AUTH0_DOMAIN: ${{ vars.AUTH0_DOMAIN }}
+          AUTH0_CLIENT_ID: ${{ vars.AUTH0_CLIENT_ID }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const domain = process.env.AUTH0_DOMAIN || '';
+          const clientId = process.env.AUTH0_CLIENT_ID || '';
+          const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '';
+          const apiToken = process.env.CLOUDFLARE_API_TOKEN || '';
+          if (!domain || !clientId || !accountId || !apiToken) {
+            console.log('::notice::Deployment skipped. Add AUTH0_DOMAIN and AUTH0_CLIENT_ID as Actions variables, and CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN as Actions secrets.');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'ready=false\n');
+            process.exit(0);
+          }
+          const config = { domain, clientId };
+          const contents = `window.FORMNOTE_AUTH0_CONFIG = ${JSON.stringify(config)};\n` +
+            `if (window.FORMNOTE_AUTH0_CONFIG.domain && window.FORMNOTE_AUTH0_CONFIG.clientId) { document.documentElement.classList.add('auth-enabled'); }\n`;
+          fs.writeFileSync('frontend/auth0-config.js', contents);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, 'ready=true\n');
+          NODE
+
+      - name: Deploy static frontend
+        if: steps.config.outputs.ready == 'true'
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
