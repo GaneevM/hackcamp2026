@@ -5,7 +5,8 @@ import { WaveCounter } from './session-metrics.js';
 const waveCounter = new WaveCounter();
 import { assessPushup, PushupCounter } from './pushup.mjs';
 import { MovementCounter } from './movement-counter.mjs';
-import { fitPointerMap, mapFingerToScreen, isIndexPointing } from './air-pointer.mjs';
+import { fitPointerMapReliable, mapFingerToScreen, isIndexPointing, summarizePointerSamples } from './air-pointer.mjs';
+import { summarizePoseAngles } from './pose-calibration.mjs';
 const pushupCounter = new PushupCounter();
 const movementCounter = new MovementCounter();
 let pushupPose = null, pushupUiAt = 0;
@@ -200,6 +201,7 @@ function readPose(landmarks, world) {
     return visibility.ready;
   }
   if (!visibility.ready) {
+    resetAutoCalibrationHold('Tracking paused · show the selected joints; your saved calibration is safe.');
     app.currentAngle = null; app.angleSamples = []; updateAngleText(); $('startBtn').disabled = app.running;
     $('trackingTitle').textContent = app.running ? 'Session active · waiting for joints' : 'Camera ready — start, then step into view'; $('trackingCopy').textContent = activeMovement().frame;
     cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', activeMovement().frame, `${visibility.count}/${visibility.total} joints`);
@@ -211,6 +213,7 @@ function readPose(landmarks, world) {
     app.currentAngle = Math.round(median(app.angleSamples));
   }
   if (raw === null || !Number.isFinite(raw)) {
+    resetAutoCalibrationHold('Angle unavailable · adjust the camera until the selected joints are visible.');
     app.poseReady = false; app.currentAngle = null; app.angleSamples = [];
     $('startBtn').disabled = app.running; updateAngleText();
     $('trackingTitle').textContent = app.running ? 'Session active · waiting for angle' : 'Camera ready — waiting for angle';
@@ -290,7 +293,7 @@ function readPointerCalibration() {
 }
 function showPointerCalibration() {
   $('pointerCalibration').hidden=false;$('airPointerCursor').hidden=true;
-  airPointer.calibration={index:0,pairs:[],samples:[],startedAt:null,lastSampleAt:0,targets:pointerCalibrationTargets()};
+  airPointer.calibration={index:0,pairs:[],samples:[],startedAt:null,lastSampleAt:0,lastHandAt:null,targets:pointerCalibrationTargets()};
   $('airPointerCalibrate').disabled=true;
   placePointerCalibrationTarget();
   pointerStatus('Point at the on-screen dots to calibrate.');
@@ -301,7 +304,7 @@ function placePointerCalibrationTarget() {
   $('pointerCalibrationTarget').style.left=`${target.x*100}%`;
   $('pointerCalibrationTarget').style.top=`${target.y*100}%`;
   $('pointerCalibrationStep').textContent=`Target ${state.index+1} of ${state.targets.length}`;
-  state.samples=[];state.startedAt=null;state.lastSampleAt=0;
+  state.samples=[];state.startedAt=null;state.lastSampleAt=0;state.lastHandAt=null;
 }
 function cancelPointerCalibration() {
   airPointer.calibration=null;$('pointerCalibration').hidden=true;
@@ -310,10 +313,8 @@ function cancelPointerCalibration() {
 }
 function finishPointerCalibration(state) {
   let map;
-  try { map=fitPointerMap(state.pairs); }
-  catch { pointerToast('Calibration did not hold together. Try again.');state.index=0;state.pairs=[];placePointerCalibrationTarget();return; }
-  const errors=state.pairs.map(pair=>{const p=mapFingerToScreen(map,pair.camera);return Math.hypot(p.x-pair.screen.x,p.y-pair.screen.y);});
-  if(errors.reduce((sum,error)=>sum+error,0)/errors.length>.16){pointerToast('The points were inconsistent. Keep still and recalibrate.');state.index=0;state.pairs=[];placePointerCalibrationTarget();return;}
+  try { map=fitPointerMapReliable(state.pairs).map; }
+  catch (error) { pointerToast(error.message||'The tracked points were inconsistent. Try the center target again.');state.index=4;state.pairs=state.pairs.slice(0,4);placePointerCalibrationTarget();return; }
   try { localStorage.setItem(scopedStorageKey(AIR_POINTER_KEY),JSON.stringify({map,fingerprint:pointerFingerprint(),savedAt:new Date().toISOString()})); }
   catch { pointerToast('Could not save calibration in this browser.');cancelPointerCalibration();return; }
   airPointer.map=map;airPointer.calibration=null;$('pointerCalibration').hidden=true;airPointer.mustRelease=true;airPointer.releaseAt=null;setPointerEnabled(true);
@@ -323,30 +324,36 @@ function finishPointerCalibration(state) {
 }
 function processPointerHand(result,now) {
   const hand=result?.landmarks?.[0];
+  const calibration=airPointer.calibration;
+  if(calibration){
+    const tip=hand?.[8];
+    if(!tip||!Number.isFinite(tip.x)||!Number.isFinite(tip.y)){
+      if(calibration.lastHandAt!==null&&now-calibration.lastHandAt>350){calibration.samples=[];calibration.startedAt=null;calibration.lastSampleAt=0;}
+      $('airPointerCursor').hidden=true;
+      pointerStatus('Hand not visible · move it into frame and use even light.');
+      return;
+    }
+    if(calibration.lastHandAt!==null&&now-calibration.lastHandAt>350){calibration.samples=[];calibration.startedAt=null;calibration.lastSampleAt=0;}
+    calibration.lastHandAt=now;
+    const point={x:tip.x,y:tip.y};
+    if(calibration.startedAt===null)calibration.startedAt=now;
+    if(now-calibration.lastSampleAt>=55){calibration.samples.push(point);calibration.lastSampleAt=now;if(calibration.samples.length>36)calibration.samples.shift();}
+    const elapsed=now-calibration.startedAt,reading=summarizePointerSamples(calibration.samples);
+    const requiredHold=reading?.jitter>.055?1100:800;
+    if(!reading||elapsed<requiredHold){pointerStatus(`Hold on target ${calibration.index+1} · ${Math.min(100,Math.round(elapsed/8))}%`);return;}
+    calibration.pairs.push({camera:reading.point,screen:calibration.targets[calibration.index]});
+    calibration.index++;
+    if(calibration.index>=calibration.targets.length)finishPointerCalibration(calibration);else placePointerCalibrationTarget();
+    return;
+  }
   if(!hand||!isIndexPointing(hand)){
     $('airPointerCursor').hidden=true;
     resetPointerDwell();
-    if(airPointer.calibration){airPointer.calibration.samples=[];airPointer.calibration.startedAt=null;pointerStatus('Point with your index finger; curl the other fingers.');}
-    else if(airPointer.mustRelease){if(airPointer.releaseAt===null)airPointer.releaseAt=now;if(now-airPointer.releaseAt>=450){airPointer.mustRelease=false;airPointer.releaseAt=null;pointerStatus('Pointer ready. Point at Start or Finish & save.');}else pointerStatus('Release your index finger to arm another action.');}
+    if(airPointer.mustRelease){if(airPointer.releaseAt===null)airPointer.releaseAt=now;if(now-airPointer.releaseAt>=450){airPointer.mustRelease=false;airPointer.releaseAt=null;pointerStatus('Pointer ready. Point at Start or Finish & save.');}else pointerStatus('Release your index finger to arm another action.');}
     else if(airPointer.enabled)pointerStatus(hand?'Extend your index finger and curl the others.':'Show one hand to the camera.');
     return;
   }
   const point={x:hand[8].x,y:hand[8].y};
-  if(airPointer.calibration){
-    const state=airPointer.calibration;
-    if(state.samples.length&&Math.hypot(point.x-state.samples[0].x,point.y-state.samples[0].y)>.025){state.samples=[];state.startedAt=null;}
-    if(state.startedAt===null)state.startedAt=now;
-    if(now-state.lastSampleAt>=55){state.samples.push(point);state.lastSampleAt=now;}
-    const steady=Math.max(0,now-state.startedAt);
-    pointerStatus(`Hold on target ${state.index+1} · ${Math.min(100,Math.round(steady/7.5))}%`);
-    if(steady>=750&&state.samples.length>=8){
-      const camera={x:state.samples.reduce((sum,p)=>sum+p.x,0)/state.samples.length,y:state.samples.reduce((sum,p)=>sum+p.y,0)/state.samples.length};
-      state.pairs.push({camera,screen:state.targets[state.index]});
-      state.index++;
-      if(state.index>=state.targets.length)finishPointerCalibration(state);else placePointerCalibrationTarget();
-    }
-    return;
-  }
   if(!airPointer.enabled)return;
   const expected=readPointerCalibration();
   if(!expected){airPointer.map=null;resetPointerDwell();pointerStatus('Camera or distance changed. Recalibrate the pointer.');return;}
@@ -569,7 +576,7 @@ function monitor() {
           }
         }
         else if (app.running && !app.manual && $('exerciseSelect').value !== 'pushup' && $('exerciseSelect').value !== 'wave') movementCounter.interrupt();
-      } else { if($('exerciseSelect').value==='pushup'){pushupCounter.pause();showPushupWaiting('Step into view.');} if($('exerciseSelect').value!=='pushup'&&$('exerciseSelect').value!=='wave')movementCounter.interrupt(); app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
+      } else { if($('exerciseSelect').value==='pushup'){pushupCounter.pause();showPushupWaiting('Step into view.');} if($('exerciseSelect').value!=='pushup'&&$('exerciseSelect').value!=='wave')movementCounter.interrupt(); resetAutoCalibrationHold('Tracking paused · show the selected joints; the hold will restart automatically.'); app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
       if (app.running && !app.manual) companion?.observe({ ready: app.poseReady, angle: app.currentAngle, reps: app.reps, phase: app.phase });
       if(handLandmarker&&(airPointer.enabled||airPointer.calibration)&&frameTime-airPointer.lastDetectionAt>=80){
         airPointer.lastDetectionAt=frameTime;
@@ -803,18 +810,25 @@ function beginAutoPoseCapture(stage) {
   const prompt=movement==='sit'?(stage==='start'?'Sit on your chair with feet supported.':'Stand from the chair, only as comfortably as you can.')
     :movement==='crossbody'?(stage==='start'?'Sit comfortably and relax your selected arm by your side.':'Bring the selected arm across your chest to a comfortable stretch.')
       :(stage==='start'?'Settle into your comfortable starting position.':'Move to a comfortable endpoint without forcing it.');
-  $('autoCalStatus').textContent=`${prompt} Hold steadily for 3 seconds.`;
+  $('autoCalStatus').textContent=`${prompt} Hold steadily while we sample for a few seconds.`;
+}
+function resetAutoCalibrationHold(message='Tracking paused · show the selected joints.') {
+  const state=app.autoCalibration;
+  if(!state.active||!['start','end'].includes(state.stage))return;
+  state.samples=[];state.phaseAt=null;state.lastSampleAt=0;
+  $('autoCalStatus').textContent=message;
 }
 function collectAutoCalibration() {
   const state=app.autoCalibration; if (!state.active || !['start','end'].includes(state.stage)) return;
-  if (!app.poseReady || app.currentAngle===null) { state.samples=[]; state.phaseAt=null; $('autoCalStatus').textContent='Move into frame until the needed joints are visible.'; return; }
-  const now=performance.now(); if (state.phaseAt===null) state.phaseAt=now;
-  if (now-state.lastSampleAt>=100) { state.samples.push(app.currentAngle); state.lastSampleAt=now; }
-  const remaining=Math.max(0,3000-(now-state.phaseAt)); $('autoCalStatus').textContent=`Hold still as comfortably as you can · ${Math.ceil(remaining/1000)}s`;
-  if (remaining>0) return;
-  const spread=state.samples.length?Math.max(...state.samples)-Math.min(...state.samples):Infinity;
-  if (state.samples.length<15 || spread>20) { state.samples=[]; state.phaseAt=now; $('autoCalStatus').textContent='The angle is still changing. Hold your comfortable pose steady and try again.'; return; }
-  const captured=Math.round(median(state.samples));
+  if (!app.poseReady || app.currentAngle===null) { resetAutoCalibrationHold('Move into view until the needed joints and angle are visible.'); return; }
+  const now=performance.now(); if (state.phaseAt===null) { state.phaseAt=now; state.lastSampleAt=0; }
+  if (now-state.lastSampleAt>=80) { state.samples.push(app.currentAngle); if(state.samples.length>90)state.samples.shift(); state.lastSampleAt=now; }
+  const elapsed=now-state.phaseAt,estimate=summarizePoseAngles(state.samples);
+  if(elapsed<1200||!estimate?.stable){
+    $('autoCalStatus').textContent=elapsed>6000?'Tracking is still noisy · adjust the light or camera, or enter angles manually.':`Hold comfortably still · ${Math.max(0,Math.ceil((1200-elapsed)/1000))}s`;
+    return;
+  }
+  const captured=estimate.angle;
   if (state.stage==='start') {
     state.firstAngle=captured; state.stage='between'; state.samples=[]; state.phaseAt=null; updateAutoCalibrationView();
     $('autoCalStatus').textContent=`Starting pose saved at about ${captured}°. Now move to your comfortable endpoint and continue.`;
@@ -835,6 +849,11 @@ async function beginAutoCalibration() {
 $('startAutoCalibration').onclick=beginAutoCalibration;
 $('closeAutoCalibration').onclick=()=>{app.autoCalibration.active=false;app.autoCalibration.stage='intro';$('autoCalibrationDialog').close();syncCameraControl();};
 $('cancelAutoCalibration').onclick=$('closeAutoCalibration').onclick;
+$('autoCalManual').onclick=()=>{
+  app.autoCalibration.active=false;app.autoCalibration.stage='intro';app.autoCalibration.samples=[];app.autoCalibration.phaseAt=null;
+  $('autoCalibrationDialog').close();syncCameraControl();openCalibration();
+  $('captureStatus').textContent='Enter both comfortable angles from a physio measurement or another reliable source.';
+};
 $('autoCalAction').onclick=async()=>{
   const state=app.autoCalibration;
   if(state.stage==='intro'){
@@ -996,7 +1015,7 @@ function readPushupPose(landmarks,world) {
   if(!pushupPose.valid){
     app.currentAngle=null;app.angleSamples=[];pushupCounter.pause();
     // A lost pose interrupts a calibration hold as well as a repetition.
-    if(app.autoCalibration.active){app.autoCalibration.samples=[];app.autoCalibration.phaseAt=null;}
+    if(app.autoCalibration.active)resetAutoCalibrationHold('Pose not clear · reframe until the required joints are visible.');
     $('startBtn').disabled=app.running||app.countdownActive||!app.stream||!app.landmarker;updateAngleText();
     if(now-pushupUiAt>200){pushupUiAt=now;showPushupWaiting(pushupPose.cue);cameraState('Adjust view','bad',pushupPose.cue,`${pushupPose.count}/${pushupPose.total} joints`);}
     return false;
