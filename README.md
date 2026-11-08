@@ -20,6 +20,16 @@ npm.cmd --prefix server start
 
 Open <http://localhost:3001>. Use Node.js 24 or newer. Keep existing server/.env private; see server/.env.example for model configuration. Local notes work without an API key. Camera access requires localhost or HTTPS.
 
+## Air pointer and swipe scrolling
+
+In Practice, open **Camera & body side → Enable air pointer**. Face the camera at your normal exercise distance with both shoulders and one hand visible. Aim at four dots, holding still after each move, then follow the open-palm swipe-up and swipe-down lessons. The preview shows the tracked fingertip. Failed positions offer a full restart instead of repeating a fifth dot.
+
+Point with your index finger to move the cursor and hold over a control to activate it. Relax the finger before clicking again. Open your palm, pause, swipe up or down, and pause again to scroll in that direction by up to 192 CSS pixels. A held hand does not repeatedly scroll. Press Escape to disable the pointer. The camera stays on across sections while the pointer is enabled; use Turn camera off in Practice when finished.
+
+The tracker crops around distant wrists, maps the fingertip relative to the shoulders, filters tracking spikes, and renders the cursor between camera observations. Both shoulders and recognizable fingers must remain visible; distance compensation cannot recover detail the camera cannot resolve. Image crops use MediaPipe's [image detection API](https://developers.google.com/edge/api/mediapipe/js/tasks-vision.handlandmarker). Pointer calibration version 2 replaces the earlier pointer setup without clearing session history or photos.
+
+Pointer regression checks run with `node --test tests/air-pointer.test.mjs`. The optional `node tests/pointer-browser-smoke.mjs` check requires Node 20+, Playwright, an installed Chromium browser, and a freshly built `dist/` from `node scripts/build.mjs`. It serves a local synthetic identity and video, tests calibration and scrolling, and never accesses a webcam. A real camera check at the intended distance and lighting is still needed.
+
 ## Sign-in (Auth0)
 
 Formnote's sign-in screen offers **Continue with Google**, **Sign in with email** (email and password) and **Create an account**. Auth0 manages credentials. Missing configuration keeps the app gated with an actionable error. See [authentication and deployment setup](AUTH-DEPLOYMENT.md) for verified settings, owner steps and test limitations.
