@@ -7,7 +7,7 @@ export function createLiveFeedback(options = {}) {
   section.id = 'geminiLivePanel';
   section.className = 'gemini-live-panel';
   section.style.cssText='border-top:2px solid #cbd8e2;margin-top:22px;padding-top:20px;font-size:16px;line-height:1.5';
-  section.innerHTML = `<h2>Gemini live companion</h2><label><input type="checkbox" data-live-consent> Share camera snapshots with Gemini during this exercise</label><p>Optional demo feedback. Sends up to one image per second to Google while your session is active. Images are not saved by Physipeak. Feedback can be delayed or mistaken; follow your care plan.</p><button type="button" class="secondary" data-live-reconnect>Connect / reconnect Gemini</button><button type="button" class="secondary" data-live-mic aria-pressed="false">Enable microphone help</button><p>With microphone help on, say “Help me” or ask what to do next after Gemini finishes speaking. Your spoken question is sent to Google; audio is not saved by Physipeak.</p><p data-live-status role="status">Enable before starting a camera session. Live coaching stops after three minutes.</p>`;
+  section.innerHTML = `<h2>Gemini live companion</h2><label><input type="checkbox" data-live-consent> Share camera snapshots with Gemini during this exercise</label><p>Optional demo feedback. Sends up to one image per second to Google while your session is active. Images are not saved by Physipeak. Feedback can be delayed or mistaken; follow your care plan.</p><button type="button" class="secondary" data-live-reconnect>Connect / reconnect Gemini</button><button type="button" class="secondary" data-live-mic aria-pressed="false">Enable microphone help</button><p>With microphone help on, say “Help me” or ask what to do next after Gemini finishes speaking. Your spoken question is sent to Google; audio is not saved by Physipeak.</p><div data-live-mic-panel hidden><label>Microphone input <meter data-live-mic-level min="0" max="100" value="0" aria-label="Microphone sound level" style="display:block;width:100%;height:28px"></meter></label><p data-live-mic-status>Microphone off.</p></div><p data-live-heard aria-live="polite"></p><p data-live-status role="status">Enable before starting a camera session. Live coaching stops after three minutes.</p>`;
   const host = document.querySelector('.session-companion');
   if (!host) throw new Error('Voice controls must be mounted before Gemini Live.');
   host.querySelector('.companion-toolbar').after(section);
@@ -17,13 +17,19 @@ export function createLiveFeedback(options = {}) {
   let latest = null, config = null, frames = 0, lastProgressAt = 0;
   const sources = new Set();
   const micButton = section.querySelector('[data-live-mic]');
+  const micPanel = section.querySelector('[data-live-mic-panel]'), micLevel = section.querySelector('[data-live-mic-level]'), micStatus = section.querySelector('[data-live-mic-status]'), heard = section.querySelector('[data-live-heard]');
+  let recognized = ''; 
   function sendRealtime(value) { if (ready && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({realtimeInput:value})); }
   const microphone = createLiveMicrophone({
     allowed: () => ready && Boolean(options.getSession?.()) && !awaitingTurnComplete && sources.size === 0 && !document.hidden,
-    begin: () => { awaitingTurnComplete = true; sendRealtime({activityStart:{}}); label.textContent = 'Listening to your question…'; },
+    begin: () => { recognized = ''; heard.textContent = ''; awaitingTurnComplete = true; sendRealtime({activityStart:{}}); label.textContent = 'Listening to your question…'; },
     audio: bytes => sendRealtime({audio:{mimeType:'audio/pcm;rate=16000',data:btoa(String.fromCharCode(...bytes))}}),
     finish: () => { if(ready) { sendRealtime({activityEnd:{}}); label.textContent = 'Gemini is considering your question…'; } },
-    state: active => { micButton.setAttribute('aria-pressed',String(active)); micButton.textContent = active ? 'Microphone help on · turn off' : 'Enable microphone help'; },
+    level: ({rms,paused,speaking}) => {
+      micLevel.value = Math.min(100,Math.round(rms*1000));
+      micStatus.textContent = paused ? 'Microphone paused while Gemini finishes its reply.' : speaking ? 'Speech detected · sending your question to Gemini…' : rms >= .025 ? 'Sound detected · keep speaking.' : 'Listening · speak clearly and watch the microphone bar.';
+    },
+    state: active => { micPanel.hidden = !active; micLevel.value = 0; micStatus.textContent = active ? 'Microphone enabled · say “Help me”.' : 'Microphone off.'; micButton.setAttribute('aria-pressed',String(active)); micButton.textContent = active ? 'Microphone help on · turn off' : 'Enable microphone help'; },
     error: message => { label.textContent = message; }
   });
   micButton.onclick = () => {
@@ -97,6 +103,7 @@ export function createLiveFeedback(options = {}) {
             if (message.setupComplete) { ready = true; label.textContent = 'Gemini is watching your movement · camera sharing active'; timer = setInterval(tick, 250); }
             const serverContent = message.serverContent;
             if (serverContent?.modelTurn) awaitingTurnComplete = true;
+            if (serverContent?.inputTranscription?.text) { recognized = (recognized + serverContent.inputTranscription.text).slice(-1000); heard.textContent = 'Gemini heard: ' + recognized; }
             if (serverContent?.interrupted) {
               // Gemini explicitly canceled this turn; discard only audio from
               // that canceled turn. Ordinary chunk gaps do not clear playback.
