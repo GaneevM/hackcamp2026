@@ -116,12 +116,13 @@ export class WaveCounter {
   reset() {
     this.arm = null; this.origin = null; this.phase = 'ready';
     this.candidate = null; this.since = null; this.lastValid = null;
+    this.departedAt = null;
   }
   update({ position, raised, arm, threshold = .04 }, now = performance.now()) {
-    if (!raised || !Number.isFinite(position) || !arm) {
+    if (!raised || !Number.isFinite(position) || !Number.isFinite(now) || !Number.isFinite(threshold) || threshold<=0 || !arm) {
       this.reset(); return false;
     }
-    if (this.arm !== arm || (this.lastValid !== null && now - this.lastValid > 400)) this.reset();
+    if (this.arm !== arm || (this.lastValid !== null && (now - this.lastValid > 400 || now<=this.lastValid))) this.reset();
     this.arm = arm; this.lastValid = now;
     if (this.origin === null) { this.origin = position; return false; }
     const distance = Math.abs(position - this.origin);
@@ -131,8 +132,10 @@ export class WaveCounter {
     if (!zone) { this.candidate = null; this.since = null; return false; }
     if (this.candidate !== zone) { this.candidate = zone; this.since = now; return false; }
     if (now - this.since < 60) return false;
+    const zoneAt=this.since;
     this.candidate = null; this.since = null;
-    if (zone === 'away') { this.phase = 'moved'; return false; }
+    if (zone === 'away') { this.phase = 'moved';this.departedAt=zoneAt; return false; }
+    if(zoneAt-this.departedAt<150){this.reset();return false;}
     this.phase = 'ready'; this.origin = position;
     return true;
   }

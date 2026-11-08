@@ -67,6 +67,7 @@ let companion = null, carePages = null;
 let liveFeedback = null;
 let visionRuntime = null, visionFiles = null, handLandmarker = null;
 const handControls={enabled:false,suspended:false,gesture:'none',seenAt:0,poseAt:0,lastDetectionAt:0,pose:null,side:0,failures:0,label:null,lastHand:null,scroll:new PalmScrollController(),commands:new FingerCommandHold(),surface:null,menuSelection:0,menuAnchorY:null,menuLastAt:0,menuSamples:[],photoTimer:null,photoDeadline:0,photoAnnounced:0};
+handControls.sessionCommands=new FingerCommandHold();handControls.sessionNavigation=false;
 const handCropCanvas=document.createElement('canvas');handCropCanvas.width=512;handCropCanvas.height=512;
 
 const readSessions = () => { try { return JSON.parse(localStorage.getItem(scopedStorageKey(SESSION_KEY)) ?? (activeDataScope === 'guest' ? localStorage.getItem(SESSION_KEY) : null) ?? '[]'); } catch { return []; } };
@@ -162,7 +163,9 @@ function median(values) {
 
 function visible(landmarks, key, side = app.side) {
   const ids = bodyPoints[side]; const landmark = landmarks?.[ids?.[key]];
-  return !!landmark && (landmark.visibility ?? landmark.presence ?? 1) > 0.55;
+  return !!landmark && Number.isFinite(landmark.x) && Number.isFinite(landmark.y)
+    && landmark.x>=0 && landmark.x<=1 && landmark.y>=0 && landmark.y<=1
+    && (landmark.visibility ?? landmark.presence ?? 1) > 0.55;
 }
 
 function pointsFor(movement, landmarks) {
@@ -410,8 +413,21 @@ function performHandCommand(command) {
 }
 document.querySelectorAll('[data-hand-action]').forEach(button=>button.addEventListener('click',()=>void performHandAction(button.dataset.handAction)));
 function processControlHand(hand,now) {
-  if(!handControls.enabled||handControls.suspended||app.running||app.countdownActive)return;
+  if(!handControls.enabled||handControls.suspended||app.countdownActive)return;
   if(hand)handControls.seenAt=now;
+  if(app.running){
+    const gesture=classifyHandGesture(hand);
+    const resume=handControls.sessionCommands.update(gesture==='two'?'two':gesture==='palm'||gesture==='fist'?gesture:'other',now);
+    if(resume==='two'){
+      handControls.sessionNavigation=!handControls.sessionNavigation;stopPalmScroll();resetHandMenuMotion();handControls.commands.reset();
+      movementCounter.interrupt();waveCounter.reset();app.poseReady=false;app.currentAngle=null;app.angleSamples=[];
+      handStatus(handControls.sessionNavigation?'Hand controls on. Open palm: select an option; one finger: confirm. Hold two fingers again to resume reps.':'Exercise tracking resumed. Hold two fingers to use hand controls.');
+      if(handControls.sessionNavigation)$('handActionMenu').scrollIntoView({block:'center',behavior:'smooth'});else focusCameraStage();
+      return;
+    }
+    if(!handControls.sessionNavigation)return;
+  }
+
   if(handOnlyMode()){drawTrackedHand(hand);updateHandCameraStatus(now);}
   const previousGesture=handControls.gesture,gesture=classifyHandGesture(hand);handControls.gesture=gesture;
   const action=handControls.commands.update(gesture==='one'?'one':gesture==='palm'||gesture==='fist'?gesture:'other',now);
@@ -445,7 +461,7 @@ function controlScrollSurface(direction) {
   return node&&node!==document.body?node:dialog||document.scrollingElement;
 }
 function renderHandControlFrame(now) {
-  if(!handControls.enabled||handControls.suspended||app.running||app.countdownActive||handControls.gesture!=='palm'){stopPalmScroll();return;}
+  if(!handControls.enabled||handControls.suspended||(app.running&&!handControls.sessionNavigation)||app.countdownActive||handControls.gesture!=='palm'){stopPalmScroll();return;}
   const delta=handControls.scroll.tick(now);if(!delta)return;
   const surface=handControls.surface||controlScrollSurface(Math.sign(delta)),dialog=document.querySelector('dialog[open]');
   if(!surface?.isConnected||(dialog&&surface!==dialog&&!dialog.contains(surface))){stopPalmScroll();return;}
@@ -561,14 +577,14 @@ function canvasPoint(point, video, stage) {
 }
 const skeleton = [[11,13],[13,15],[12,14],[14,16],[11,12],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,31],[28,32]];
 const handSkeleton=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[0,17],[17,18],[18,19],[19,20]];
-function handOnlyMode(){return handControls.enabled&&!app.cameraPaused&&!app.running&&!app.countdownActive&&!app.autoCalibration.active&&!$('calibrationDialog').open;}
+function handOnlyMode(){return handControls.enabled&&!app.cameraPaused&&(!app.running||handControls.sessionNavigation)&&!app.countdownActive&&!app.autoCalibration.active&&!$('calibrationDialog').open;}
 function updateHandCameraStatus(now){
  if(!handOnlyMode())return;
  const ready=now-(handControls.seenAt??-1000)<300;
  app.poseReady=false;app.currentAngle=null;app.angleSamples=[];$('angleLive').textContent='Hand controls';
  $('trackingTitle').textContent=ready?'Hand controls ready':'Show your hand to the camera';
- $('trackingCopy').textContent='Open palm: move through the options below. Fist: stop. Hold one finger: select.';
- $('startBtn').disabled=!app.stream||!app.landmarker;
+ $('trackingCopy').textContent=app.running?'Rep counting paused for controls. Open palm: choose; one finger: select; two fingers: resume reps.':'Open palm: move through the options below. Fist: stop. Hold one finger: select.';
+ $('startBtn').disabled=app.running||!app.stream||!app.landmarker;
  cameraState(ready?'Hand controls ready':'Waiting for hand',ready?'good':'neutral','Webcam on · hand controls enabled',ready?'21 hand points':'Show one hand');
 }
 function drawTrackedHand(hand) {
@@ -588,24 +604,28 @@ function drawPose(landmarks) {
 }
 
 function poseAnchor(landmarks) {
-  const points = [landmarks?.[11], landmarks?.[12], landmarks?.[23], landmarks?.[24]]
-    .filter((point) => point && (point.visibility ?? point.presence ?? 1) > .55);
-  if (!points.length) return null;
+  const keys=$('exerciseSelect').value==='sit'?['shoulder','hip']:['shoulder'];
+  if(!keys.every(key=>visible(landmarks,key)))return null;
+  const points=keys.map(key=>landmarks[bodyPoints[app.side][key]]);
   return { x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
     y: points.reduce((sum, point) => sum + point.y, 0) / points.length };
 }
 
 function isSeatedStart(landmarks) {
   const ids=bodyPoints[app.side];
-  return seatedStart({hip:landmarks?.[ids.hip],knee:landmarks?.[ids.knee],ankle:landmarks?.[ids.ankle]});
+  if(!['hip','knee','ankle'].every(key=>visible(landmarks,key)))return false;
+  return seatedStart({hip:landmarks[ids.hip],knee:landmarks[ids.knee],ankle:landmarks[ids.ankle],aspect:$('video').videoWidth/$('video').videoHeight||1});
 }
 
 function updateMovementCounter(landmarks, now) {
+  if(!app.running||app.manual||app.countdownActive)return;
   const movement = $('exerciseSelect').value;
   const angle = app.currentAngle;
   if (!Number.isFinite(angle)) { movementCounter.interrupt(); return; }
-  const rep = movementCounter.update({ movement, angle, now, position: movement==='sit' ? landmarks?.[bodyPoints[app.side].ankle] : poseAnchor(landmarks),
-    calibration: getCalibration(movement, $('bodySide').value), context: { seated: movement==='sit' ? isSeatedStart(landmarks) : undefined } });
+  const ids=bodyPoints[app.side],shoulder=landmarks[ids.shoulder],hip=landmarks[ids.hip];
+  const bodyScale=visible(landmarks,'hip')&&visible(landmarks,'shoulder')?Math.hypot((shoulder.x-hip.x)*($('video').videoWidth/$('video').videoHeight||1),shoulder.y-hip.y):undefined;
+  const rep = movementCounter.update({ movement, angle, now, position: movement==='sit'?landmarks[ids.ankle]:poseAnchor(landmarks),
+    calibration: getCalibration(movement, $('bodySide').value), context: { bodyScale:movement==='sit'?undefined:bodyScale, anchor:movement==='sit'?'foot':'torso', seated: movement==='sit' ? isSeatedStart(landmarks) : undefined } });
   if (app.sessionStartAngle === null && movementCounter.phase !== 'find-start') app.sessionStartAngle = angle;
   app.phase = movementCounter.phase === 'find-start' ? 'ready' : movementCounter.phase === 'ready' ? 'ready' : 'moved';
   $('trackingTitle').textContent = movementCounter.phase === 'find-start' ? 'Waiting for a steady start pose'
@@ -640,7 +660,7 @@ function monitor() {
   if(!app.stream){app.raf=0;return;}
   if ($('video').readyState < 2) { app.raf = requestAnimationFrame(monitor); return; }
   // Idle hand controls need fewer body model calls than an active exercise.
-  const handsActive=handControls.enabled&&!app.running&&!app.countdownActive;
+  const handsActive=handControls.enabled&&!app.countdownActive;
   const poseDue=!app.cameraPaused&&(!handsActive||frameAt-handControls.poseAt>=(app.running?65:125));
   if (app.landmarker&&poseDue) {
     handControls.poseAt=frameAt;
@@ -684,14 +704,14 @@ function monitor() {
             updateMovementCounter(landmarks, performance.now());
           }
         }
-        else if (app.running && !app.manual && $('exerciseSelect').value !== 'wave') movementCounter.pause(performance.now());
-      } else { movementCounter.pause(performance.now()); resetAutoCalibrationHold('Tracking paused · show the selected joints; the hold will restart automatically.'); app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
+        else if (app.running && !app.manual) { movementCounter.pause(performance.now());waveCounter.reset(); }
+      } else { movementCounter.pause(performance.now());waveCounter.reset();app.angleSamples=[]; resetAutoCalibrationHold('Tracking paused · show the selected joints; the hold will restart automatically.'); app.poseReady = false; app.currentAngle = null; updateAngleText(); $('startBtn').disabled = app.running; cameraState(app.running ? 'Active · waiting for view' : 'Not started', 'bad', 'Move into view and show the joints. Counting waits for usable tracking.', '0 joints'); }
       }
       if (app.running && !app.manual) {
         const observation={ready:app.poseReady,angle:app.currentAngle,reps:app.reps,phase:$('exerciseSelect').value==='pushup'?pushupCounter.phase:app.phase};
         companion?.observe(observation); liveFeedback.observe(observation);
       }
-    } catch (error) { console.warn('Pose estimate skipped', error); }
+    } catch (error) { movementCounter.interrupt();waveCounter.reset();app.poseReady=false;app.currentAngle=null;app.angleSamples=[];console.warn('Pose estimate skipped', error); }
   }
   if(handLandmarker&&handsActive&&frameAt-handControls.lastDetectionAt>=80){
     handControls.lastDetectionAt=frameAt;
@@ -816,8 +836,8 @@ const manualCounter = document.createElement('div'); manualCounter.id = 'manualC
 manualCounter.style.cssText = 'display:none;justify-content:center;align-items:center;gap:10px;padding:0 16px 15px';
 manualCounter.innerHTML = '<button type="button" class="secondary" id="manualMinus" aria-label="Remove one repetition">−</button><span style="font-size:10px;color:var(--muted)">Manual reps</span><button type="button" class="secondary" id="manualPlus" aria-label="Add one repetition">+ Add rep</button>';
 document.querySelector('#movement').append(manualCounter);
-$('manualMinus').onclick = () => { app.reps = Math.max(0, app.reps - 1); $('repCount').textContent = String(app.reps); companion?.manualRep(app.reps, false); };
-$('manualPlus').onclick = () => { app.reps += 1; $('repCount').textContent = String(app.reps); companion?.manualRep(app.reps); };
+$('manualMinus').onclick = () => { if(!app.running||!app.manual)return;app.reps = Math.max(0, app.reps - 1); $('repCount').textContent = String(app.reps); companion?.manualRep(app.reps, false); };
+$('manualPlus').onclick = () => { if(!app.running||!app.manual)return;app.reps += 1; $('repCount').textContent = String(app.reps); companion?.manualRep(app.reps); };
 
 function endSession() {
   liveFeedback.stop();
