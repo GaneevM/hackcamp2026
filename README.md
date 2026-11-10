@@ -1,6 +1,6 @@
-# Formnote
+# physiPeak
 
-Formnote is a camera-assisted movement practice journal prototype for HackCamp. It tracks movement estimates, supports guided range calibration, records pain and confidence check-ins, and prepares a patient-reviewed visit note.
+physiPeak is a camera-assisted movement practice journal prototype for HackCamp. It tracks movement estimates, supports guided range calibration, records pain and confidence check-ins, and prepares a patient-reviewed visit note.
 
 ## Repository
 
