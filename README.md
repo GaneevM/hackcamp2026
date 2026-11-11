@@ -1,6 +1,14 @@
 # physiPeak
 
-physiPeak is a camera-assisted movement practice journal prototype for HackCamp. It tracks movement estimates, supports guided range calibration, records pain and confidence check-ins, and prepares a patient-reviewed visit note.
+A camera-assisted movement practice journal built by our team at NWHacks HackCamp, November 7-8, 2026. It estimates movement, supports guided range calibration, records pain and confidence check-ins, and prepares a patient-reviewed visit note.
+
+**First place overall, beginner division** - my first hackathon, and one of 24 prizes awarded during the 24-hour event.
+
+I led development, designed the UI/UX, built frontend and backend/API features, and presented our team's project.
+
+[Portfolio case study](https://ganeevm.github.io/physipeak/) · [Live prototype](https://physipeak.smganeev.workers.dev)
+
+This is a hackathon prototype. Movement estimates are not a diagnosis or treatment recommendation. The implementation, setup instructions, and prototype limitations are documented below.
 
 ## Repository
 
